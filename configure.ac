@@ -102,6 +102,34 @@ AS_IF([test "x$with_valgrind" == xno],
       ]
 )
 
+#
+# libibprof profiling support
+#
+AC_ARG_WITH([ibprof],
+    AC_HELP_STRING([--with-ibprof],
+                   [Search ibprof location (default NO)]),
+    [],
+    [with_ibprof=no]
+)
+
+AS_IF([test "x$with_ibprof" == xno],
+    [],
+    [AC_CHECK_HEADER(
+        [$with_ibprof/include/ibprof_api.h],
+        [
+         CFLAGS="$CFLAGS -DVMA_TIME_IBPROF"
+         CXXFLAGS="$CXXFLAGS -DVMA_TIME_IBPROF"
+         CPPFLAGS="$CPPFLAGS -I$with_ibprof/include"
+         if test -d "$with_ibprof/lib64"; then
+             LDFLAGS="$LDFLAGS -L$with_ibprof/lib64 -Wl,--rpath,$with_ibprof/lib64"
+         else
+             LDFLAGS="$LDFLAGS -L$with_ibprof/lib -Wl,--rpath,$with_ibprof/lib"
+         fi
+         AC_SUBST([LIBIBPROF_LIBS], "-libprof")
+        ],
+        [AC_MSG_ERROR([ibprof support requested, but <$with_ibprof/include/ibprof_api.h> not found.])])
+])
+
 # debug configuration. Kills CFLAGS/CXXFLAGS
 #
 
@@ -249,9 +277,6 @@ AC_TRY_LINK(
   AC_MSG_RESULT([no])
 ])
 
-# Check if MLNX_OFED's experimental CQ moderiation API is supported
-# This API allows VMA to implement the CQ manual and automatic interrupt moderation logic
-# If it is not supported then VMA code will disable all of it's CQ interrupt moderation logic
 AC_MSG_CHECKING([if IBV_EXP_CQ_MODERATION is defined])
 AC_TRY_LINK(
 #include <infiniband/verbs_exp.h>
