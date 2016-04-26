@@ -549,8 +549,10 @@ int bind(int __fd, const struct sockaddr *__addr, socklen_t __addrlen)
 	if (!orig_os_api.bind) get_orig_funcs();
 	BULLSEYE_EXCLUDE_BLOCK_END
 
+#if !defined(VMA_OPTIMIZE_LOG)
 	char buf[256];
 	srdr_logdbg_entry("fd=%d, %s", __fd, sprintf_sockaddr(buf, 256, __addr, __addrlen));
+#endif /* VMA_OPTIMIZE_LOG */
 
 	int ret = 0;
 	socket_fd_api* p_socket_object = NULL;
@@ -589,8 +591,10 @@ int connect(int __fd, const struct sockaddr *__to, socklen_t __tolen)
 	if (!orig_os_api.connect) get_orig_funcs();
 	BULLSEYE_EXCLUDE_BLOCK_END
 
+#if !defined(VMA_OPTIMIZE_LOG)
 	char buf[256];
 	srdr_logdbg_entry("fd=%d, %s", __fd, sprintf_sockaddr(buf, 256, __to, __tolen));
+#endif /* VMA_OPTIMIZE_LOG */
 
 	int ret = 0;
 	socket_fd_api* p_socket_object = NULL;
@@ -1373,6 +1377,7 @@ int select_helper(int __nfds,
 	int off_rfds_buffer[__nfds];
 	io_mux_call::offloaded_mode_t off_modes_buffer[__nfds];
 
+#if !defined(VMA_OPTIMIZE_LOG)
 	if (g_vlogger_level >= VLOG_FUNC) {
 		const int tmpbufsize = 256;
 		char tmpbuf[tmpbufsize], tmpbuf2[tmpbufsize];
@@ -1380,12 +1385,14 @@ int select_helper(int __nfds,
 			   sprintf_fdset(tmpbuf, tmpbufsize, __nfds, __readfds), 
 			   sprintf_fdset(tmpbuf2, tmpbufsize, __nfds, __writefds));
 	}
+#endif /* VMA_OPTIMIZE_LOG */
 
 	try {
 		select_call scall(off_rfds_buffer, off_modes_buffer,
 		                  __nfds, __readfds, __writefds, __exceptfds, __timeout, __sigmask);
 		int rc = scall.call();
 
+#if !defined(VMA_OPTIMIZE_LOG)
 		if (g_vlogger_level >= VLOG_FUNC) {
 			const int tmpbufsize = 256;
 			char tmpbuf[tmpbufsize], tmpbuf2[tmpbufsize];
@@ -1393,6 +1400,7 @@ int select_helper(int __nfds,
 				   sprintf_fdset(tmpbuf, tmpbufsize, __nfds, __readfds),
 				   sprintf_fdset(tmpbuf2, tmpbufsize, __nfds, __writefds));
 		}
+#endif /* VMA_OPTIMIZE_LOG */
 
 		return rc;
 	}
@@ -1581,6 +1589,7 @@ int epoll_ctl(int __epfd, int __op, int __fd, struct epoll_event *__event)
 	if (!orig_os_api.epoll_ctl) get_orig_funcs();
 	BULLSEYE_EXCLUDE_BLOCK_END
 
+#if !defined(VMA_OPTIMIZE_LOG)
 	const static char * op_names[] = {
 	     "<null>",
 	     "ADD",
@@ -1594,6 +1603,7 @@ int epoll_ctl(int __epfd, int __op, int __fd, struct epoll_event *__event)
 	else {
 		srdr_logfunc_entry("epfd=%d, op=%s, fd=%d, event=NULL", __epfd, op_names[__op], __fd);
 	}
+#endif /* VMA_OPTIMIZE_LOG */
 
 	epfd_info *epfd_info = fd_collection_get_epfd(__epfd);
 	if (!epfd_info) {
