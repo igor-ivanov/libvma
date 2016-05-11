@@ -484,7 +484,14 @@ void sockinfo_tcp::handle_socket_linger() {
 	memset(&elapsed, 0,sizeof(elapsed));
 	gettime(&start);
 	while ((tv_to_usec(&elapsed) <= linger_time_usec) && (m_pcb.unsent || m_pcb.unacked)) {
+#if defined(USE_HW_ACCESS)
+		/* WA: Don't call rx_wait() in order not to miss VMA events in vma_poll() flow.
+		 * TBD: find proper solution!
+		 */
+		NOT_IN_USE(poll_cnt);
+#else
 		rx_wait(poll_cnt, false);
+#endif
 		tcp_output(&m_pcb);
 		gettime(&current);
 		tv_sub(&current, &start, &elapsed);
