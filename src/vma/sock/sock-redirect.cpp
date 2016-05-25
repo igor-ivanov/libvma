@@ -388,7 +388,7 @@ int vma_free_vma_packets(struct vma_packet_desc_t *packets, int num)
 			p_socket_object = (socket_fd_api*)desc->path.rx.context;
 			ring* rng = (ring*)desc->p_desc_owner;
 			p_socket_object->free_buffs(packets[i].total_len);
-			rng->vma_poll_reclaim_recv_buffers_no_lock(desc);
+			rng->vma_poll_reclaim_recv_buffers(desc);
 		}
 		return 0;
 	}
@@ -418,7 +418,7 @@ int vma_buff_free(vma_buff_t *buff)
 	if (likely(buff)) {
 		desc = (mem_buf_desc_t*)buff;
 		ring* rng = (ring*)desc->p_desc_owner;
-		return rng->vma_poll_reclaim_single_recv_buffer_no_lock(desc);
+		return rng->vma_poll_reclaim_single_recv_buffer(desc);
 	}
 	errno = EINVAL;
 	return -1;

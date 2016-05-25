@@ -50,8 +50,8 @@ public:
 	virtual void		adapt_cq_moderation();
 	bool			reclaim_recv_buffers_no_lock(descq_t *rx_reuse); // No locks
 	virtual bool		reclaim_recv_buffers_no_lock(mem_buf_desc_t* rx_reuse_lst); // No locks
-	virtual int		vma_poll_reclaim_single_recv_buffer_no_lock(mem_buf_desc_t* rx_reuse_lst); // No locks
-	virtual void		vma_poll_reclaim_recv_buffers_no_lock(mem_buf_desc_t* rx_reuse_lst); // No locks
+	virtual int		vma_poll_reclaim_single_recv_buffer(mem_buf_desc_t* rx_reuse_lst); // No locks
+	virtual void		vma_poll_reclaim_recv_buffers(mem_buf_desc_t* rx_reuse_lst); // No locks
 	virtual bool		reclaim_recv_buffers(descq_t *rx_reuse);
 	virtual int		drain_and_proccess(cq_type_t cq_type);
 	virtual int		wait_for_notification_and_process_element(cq_type_t cq_type, int cq_channel_fd, uint64_t* p_cq_poll_sn, void* pv_fd_ready_array = NULL);
@@ -150,6 +150,10 @@ private:
 	flow_spec_udp_uc_map_t	m_flow_udp_uc_map;
 	const bool		m_b_sysvar_eth_mc_l2_only_rules;
 
+	/* >>> mlx5 optimization */
+	mem_buf_desc_t*		m_rx_buffs_rdy_for_free_head;
+	mem_buf_desc_t*		m_rx_buffs_rdy_for_free_tail;
+	/* <<< mlx5 optimization */
 };
 
 class ring_eth : public ring_simple
