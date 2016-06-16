@@ -81,7 +81,8 @@ sockinfo::sockinfo(int fd) throw (vma_exception):
 		m_n_sysvar_rx_num_buffs_reuse(safe_mce_sys().rx_bufs_batch),
 		m_n_sysvar_rx_poll_num(safe_mce_sys().rx_poll_num),
 		m_rx_callback(NULL),
-		m_rx_callback_context(NULL)
+		m_rx_callback_context(NULL),
+		m_fd_context((void *)((uintptr_t)m_fd))
 {
 	m_rx_epfd = orig_os_api.epoll_create(128);
 	if (unlikely(m_rx_epfd == -1)) {
@@ -200,6 +201,50 @@ int sockinfo::ioctl(unsigned long int __request, unsigned long int __arg) throw 
 
     si_logdbg("going to OS for ioctl request=%d, flags=%x", __request, __arg);
 	return orig_os_api.ioctl(m_fd, __request, __arg);
+}
+
+int sockinfo::setsockopt(int __level, int __optname, const void *__optval, socklen_t __optlen) throw (vma_error)
+{
+	int ret = -1;
+
+	if (__level == SOL_SOCKET) {
+		switch(__optname) {
+		case SO_VMA_USER_DATA:
+			if (__optlen == sizeof(m_fd_context)) {
+				m_fd_context = *(void **)__optval;
+				ret = 0;
+			} else {
+				errno = EINVAL;
+			}
+			break;
+		default:
+			break;
+		}
+	}
+
+	return ret;
+}
+
+int sockinfo::getsockopt(int __level, int __optname, void *__optval, socklen_t *__optlen) throw (vma_error)
+{
+	int ret = -1;
+
+	if (__level == SOL_SOCKET) {
+		switch(__optname) {
+		case SO_VMA_USER_DATA:
+			if (*__optlen == sizeof(m_fd_context)) {
+				*(void **)__optval = m_fd_context;
+				ret = 0;
+			} else {
+				errno = EINVAL;
+			}
+			break;
+		default:
+			break;
+		}
+	}
+
+	return ret;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
