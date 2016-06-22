@@ -34,6 +34,7 @@
 #ifndef QP_MGR_H
 #define QP_MGR_H
 
+#include <infiniband/mlx5_hw.h>
 #include <errno.h>
 #include <ifaddrs.h>
 
@@ -50,6 +51,8 @@
 #include "vma/dev/ib_ctx_handler.h"
 #include "vma/dev/ah_cleaner.h"
 #include "vma/dev/cq_mgr.h"
+#include "vma/dev/ring.h"
+#include "vma/hw/mlx5/wqe.h"
 
 class buffer_pool;
 class cq_mgr;
