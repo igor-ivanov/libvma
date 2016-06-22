@@ -75,6 +75,12 @@ qp_mgr::qp_mgr(const ring_simple* p_ring, const ib_ctx_handler* p_context, const
 {
 	m_ibv_rx_sg_array = new ibv_sge[m_n_sysvar_rx_num_wr_to_post_recv];
 	m_ibv_rx_wr_array = new ibv_recv_wr[m_n_sysvar_rx_num_wr_to_post_recv];
+	m_rq_wqe_counter = 0;
+	m_sq_wqe_counter = 0;
+	/* >>> mlx5 optimization */
+	m_rq_wqe_idx_to_wrid = (uint64_t *)malloc(m_rx_num_wr * sizeof(*m_rq_wqe_idx_to_wrid));
+	m_sq_wqe_idx_to_wrid = (uint64_t *)malloc(m_tx_num_wr * sizeof(*m_sq_wqe_idx_to_wrid));
+	/* <<< mlx5 optimization */
 }
 
 qp_mgr::~qp_mgr()
@@ -105,6 +111,18 @@ qp_mgr::~qp_mgr()
 
 	delete[] m_ibv_rx_sg_array;
 	delete[] m_ibv_rx_wr_array;
+
+	/* >>> mlx5 optimization */
+	if (m_rq_wqe_idx_to_wrid) {
+		free(m_rq_wqe_idx_to_wrid);
+		m_rq_wqe_idx_to_wrid = NULL;
+	}
+
+	if (m_sq_wqe_idx_to_wrid) {
+		free(m_sq_wqe_idx_to_wrid);
+		m_sq_wqe_idx_to_wrid = NULL;
+	}
+	/* <<< mlx5 optimization */
 
 	qp_logdbg("Rx buffer poll: %d free global buffers available", g_buffer_pool_rx->get_free_count());
 	qp_logdbg("delete done");
@@ -176,6 +194,19 @@ int qp_mgr::configure(struct ibv_comp_channel* p_rx_comp_event_channel)
 		qp_logerr("ibv_query_qp failed (errno=%d %m)", errno);
 		return -1;
 	} ENDIF_VERBS_FAILURE;
+
+	/* >>> mlx5 optimization */
+	struct verbs_qp *vqp = (struct verbs_qp *)m_qp;
+	m_mlx5_hw_qp = (struct mlx5_qp*)container_of(vqp, struct mlx5_qp, verbs_qp);
+
+	m_qp_num = m_mlx5_hw_qp->ctrl_seg.qp_num;
+	m_mlx5_sq_wqes = (volatile struct mlx5_wqe64 (*)[])(uintptr_t)m_mlx5_hw_qp->gen_data.sqstart;
+	m_sq_db = &m_mlx5_hw_qp->gen_data.db[MLX5_SND_DBR];
+	m_sq_bf_reg = m_mlx5_hw_qp->gen_data.bf->reg;
+	m_sq_bf_offset = m_mlx5_hw_qp->gen_data.bf->offset;
+	m_sq_bf_buf_size = m_mlx5_hw_qp->gen_data.bf->buf_size;
+	mlx5_init_sq();
+	/* <<< mlx5 optimization */
 
 	m_max_inline_data = min(tmp_ibv_qp_init_attr.cap.max_inline_data, tx_max_inline);
 	qp_logdbg("requested max inline = %d QP, actual max inline = %d, VMA max inline set to %d, max_send_wr=%d, max_recv_wr=%d, max_recv_sge=%d, max_send_sge=%d",
@@ -273,6 +304,9 @@ void qp_mgr::release_rx_buffers()
 		int ret = m_p_cq_mgr_rx->drain_and_proccess(&last_polled_rx_wr_id);
 		qp_logdbg("draining completed on rx cq_mgr (%d wce)", ret);
 		total_ret += ret;
+		if (0 == ret) {
+			break;
+		}
 
 		// Add short delay (500 usec) to allow for WQE's to be flushed to CQ every poll cycle
 		const struct timespec short_sleep = {0, 500000}; // 500 usec
@@ -374,6 +408,8 @@ void qp_mgr::trigger_completion_for_all_sent_packets()
 		}
 		m_p_ring->m_tx_num_wr_free--;
 
+		/* >>> mlx5 optimization */
+#if !defined(USE_HW_ACCESS)
 		IF_VERBS_FAILURE(vma_ibv_post_send(m_qp, &send_wr, &bad_wr)) {
 			qp_logerr("failed post_send%s (errno=%d %m)", ((vma_send_wr_send_flags(send_wr) & VMA_IBV_SEND_INLINE)?"(+inline)":""), errno);
 			if (bad_wr) {
@@ -381,6 +417,12 @@ void qp_mgr::trigger_completion_for_all_sent_packets()
 				  bad_wr->wr_id, vma_send_wr_send_flags(*bad_wr), bad_wr->sg_list[0].addr, bad_wr->sg_list[0].length, bad_wr->sg_list[0].lkey, m_max_inline_data);
 			}
 		} ENDIF_VERBS_FAILURE;
+#else
+		NOT_IN_USE(bad_wr);
+//		mlx5_set_signal_in_next_send_wqe();
+		mlx5_send(&send_wr);
+#endif
+		/* >>> mlx5 optimization */
 
 		if (p_ah) {
 			IF_VERBS_FAILURE(ibv_destroy_ah(p_ah))
@@ -448,6 +490,13 @@ int qp_mgr::post_recv(mem_buf_desc_t* p_mem_buf_desc)
 		m_ibv_rx_sg_array[m_curr_rx_wr].addr   = (uintptr_t)p_mem_buf_desc->p_buffer;
 		m_ibv_rx_sg_array[m_curr_rx_wr].length = p_mem_buf_desc->sz_buffer;
 		m_ibv_rx_sg_array[m_curr_rx_wr].lkey   = p_mem_buf_desc->lkey;
+
+		/* >>> mlx5 optimization */
+		uint64_t index = m_rq_wqe_counter & (m_rx_num_wr - 1);
+
+		m_rq_wqe_idx_to_wrid[index] = (uintptr_t)p_mem_buf_desc;
+		m_rq_wqe_counter++;
+		/* <<< mlx5 optimization */
 
 		if (m_curr_rx_wr == m_n_sysvar_rx_num_wr_to_post_recv - 1) {
 
@@ -517,6 +566,8 @@ int qp_mgr::send(vma_ibv_send_wr* p_send_wqe)
 	}
 	++m_n_tx_count;
 
+	/* >>> mlx5 optimization */
+#if !defined(USE_HW_ACCESS)
 /*	ibv_send_wr send_wr = *p_send_wqe;
 	vlog_printf(VLOG_WARNING, MODULE_NAME ":%d: tx packet info (buf->%p, bufsize=%d)\n", __LINE__, (void*)send_wr.sg_list[0].addr, send_wr.sg_list[0].length);
 	vlog_print_buffer(VLOG_WARNING, "tx packet data: ", "\n", (const char*)((void*)send_wr.sg_list[0].addr), min(112, (int)send_wr.sg_list[0].length));
@@ -541,6 +592,12 @@ int qp_mgr::send(vma_ibv_send_wr* p_send_wqe)
 #ifdef VMA_TIME_MEASURE
 	TAKE_T_TX_POST_SEND_END;
 #endif
+#else
+	NOT_IN_USE(bad_wr);
+//	mlx5_set_signal_in_next_send_wqe();
+	mlx5_send(p_send_wqe);
+#endif
+	/* <<< mlx5 optimization */
 
 	if (is_signaled) {
 
@@ -654,3 +711,85 @@ void qp_mgr_ib::update_pkey_index()
 		qp_logdbg("IB: Found correct pkey_index (%d) for pkey '%d'", m_pkey_index, m_pkey);
 	}
 }
+
+/* >>> mlx5 optimization */
+void qp_mgr::mlx5_set_signal_in_next_send_wqe()
+{
+	volatile struct mlx5_wqe64 *wqe = &(*m_mlx5_sq_wqes)[m_sq_wqe_counter & (m_tx_num_wr - 1)];
+	wqe->ctrl.data[2] = htonl(8);
+}
+
+void qp_mgr::mlx5_send(vma_ibv_send_wr *p_send_wqe)
+{
+	uintptr_t addr = 0;
+	uint32_t length = 0;
+
+	addr = p_send_wqe->sg_list[0].addr;
+
+	/* Copy the first 16 bytes into the inline header */
+	memcpy((void *)(uintptr_t)m_sq_hot_wqe->eseg.inline_hdr_start,
+	       (void *)(uintptr_t)addr,
+	       MLX5_ETH_INLINE_HEADER_SIZE);
+
+	addr += MLX5_ETH_INLINE_HEADER_SIZE;
+	length = p_send_wqe->sg_list[0].length;
+	length -= MLX5_ETH_INLINE_HEADER_SIZE;
+
+	m_sq_hot_wqe->dseg.byte_count = htonl(length);
+	m_sq_hot_wqe->dseg.lkey = htonl(p_send_wqe->sg_list[0].lkey);
+	m_sq_hot_wqe->dseg.addr = htonll(addr);
+
+	m_sq_wqe_idx_to_wrid[m_sq_hot_wqe_index] = (uintptr_t)p_send_wqe->wr_id;
+
+	++m_sq_wqe_counter;
+	volatile uintptr_t *dst = (volatile uintptr_t *)
+			((uintptr_t)m_sq_bf_reg + m_sq_bf_offset);
+
+	wmb();
+	*m_sq_db = htonl(m_sq_wqe_counter);
+	/* This wc_wmb ensures ordering between DB record and BF copy */
+	wc_wmb();
+
+	/*
+	 * Avoid using memcpy() to copy to BlueFlame page, since memcpy()
+	 * implementations may use move-string-buffer assembler instructions,
+	 * which do not guarantee order of copying.
+	 */
+	COPY_64B_NT(dst, m_sq_hot_wqe);
+	m_sq_bf_offset ^= m_sq_bf_buf_size;
+
+	/*Set the next WQE and index*/
+	m_sq_hot_wqe = &(*m_mlx5_sq_wqes)[m_sq_wqe_counter & (m_tx_num_wr - 1)];
+	/* Write only data[0] which is the single element which changes.
+	 * Other fields are already initialised in mlx5_init_sq. */
+	m_sq_hot_wqe->ctrl.data[0] = htonl((m_sq_wqe_counter << 8) | MLX5_OPCODE_SEND);
+	m_sq_hot_wqe_index = m_sq_wqe_counter & (m_tx_num_wr - 1);;
+}
+
+void qp_mgr::mlx5_init_sq()
+{
+	unsigned int i;
+	unsigned int comp = NUM_TX_POST_SEND_NOTIFY;
+
+	for (i = 0; (i != m_tx_num_wr); ++i) {
+		volatile struct mlx5_wqe64 *wqe = &(*m_mlx5_sq_wqes)[i];
+
+		memset((void *)(uintptr_t)wqe, 0, sizeof(struct mlx5_wqe64));
+		wqe->eseg.inline_hdr_sz = htons(16);
+		wqe->eseg.cs_flags = MLX5_ETH_WQE_L3_CSUM | MLX5_ETH_WQE_L4_CSUM;
+		wqe->ctrl.data[1] = htonl((m_qp_num << 8) | 4);
+		//wqe->dseg.lkey = (m_p_ring->get_lkey());
+		/* Store the completion request in the WQE. */
+		if (--comp == 0) {
+			wqe->ctrl.data[2] = htonl(8);
+			comp = NUM_TX_POST_SEND_NOTIFY;
+		}
+		else
+			wqe->ctrl.data[2] = 0;
+	}
+	m_sq_hot_wqe = &(*m_mlx5_sq_wqes)[0];
+	m_sq_hot_wqe->ctrl.data[0] = htonl(MLX5_OPCODE_SEND);
+	m_sq_hot_wqe_index = 0;
+	qp_logdbg("%p: allocated and configured %u WRs", this, m_tx_num_wr);
+}
+/* <<< mlx5 optimization */
