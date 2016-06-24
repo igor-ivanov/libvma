@@ -303,7 +303,7 @@ cq_mgr::~cq_mgr()
 	if (!m_p_ib_ctx_handler->is_removed()) {
 		cq_logfunc("destroying ibv_cq");
 		IF_VERBS_FAILURE(ibv_destroy_cq(m_p_ibv_cq)) {
-			cq_logerr("destroy cq failed (errno=%d %m)", errno);
+			cq_logdbg("destroy cq failed (errno=%d %m)", errno);
 		} ENDIF_VERBS_FAILURE;
 	}
 	
@@ -610,6 +610,7 @@ mem_buf_desc_t* cq_mgr::process_cq_element_rx(vma_ibv_wc* p_wce)
 		p_mem_buf_desc->path.rx.context = this;
 
 		p_mem_buf_desc->path.rx.is_vma_thr = false;
+		p_mem_buf_desc->path.rx.vma_polled = false;
 
 		//this is not a deadcode if timestamping is defined in verbs API
 		// coverity[dead_error_condition]
@@ -677,6 +678,7 @@ void cq_mgr::reclaim_recv_buffer_helper(mem_buf_desc_t* buff)
 				temp->reset_ref_count();
 				temp->path.rx.gro = 0;
 				temp->path.rx.is_vma_thr = false;
+				temp->path.rx.vma_polled = false;
 				temp->path.rx.p_ip_h = NULL;
 				temp->path.rx.p_tcp_h = NULL;
 				temp->path.rx.sw_timestamp.tv_nsec = 0;
@@ -726,6 +728,43 @@ void cq_mgr::mem_buf_desc_return_to_owner(mem_buf_desc_t* p_mem_buf_desc, void* 
 	cq_logfuncall("");
 	NOT_IN_USE(pv_fd_ready_array);
 	reclaim_recv_buffer_helper(p_mem_buf_desc);
+}
+
+int cq_mgr::vma_poll_and_process_element_rx(mem_buf_desc_t **p_desc_lst)
+{
+	int packets_num = 0;
+
+	if (unlikely(m_rx_hot_buff == NULL)) {
+		int index = m_qp->m_mlx5_hw_qp->rq.tail & (m_qp->m_rx_num_wr - 1);
+		m_rx_hot_buff = (mem_buf_desc_t*)(uintptr_t)m_qp->m_rq_wqe_idx_to_wrid[index];
+		m_rx_hot_buff->path.rx.context = this;
+		m_rx_hot_buff->path.rx.is_vma_thr = false;
+	}
+	//prefetch_range((uint8_t*)m_rx_hot_buff->p_buffer,mce_sys.rx_prefetch_bytes_before_poll);
+
+	volatile mlx5_cqe64 *cqe = mlx5_get_cqe64();
+
+	if (likely(cqe)) {
+		++m_n_wce_counter;
+		++m_qp->m_mlx5_hw_qp->rq.tail;
+		m_rx_hot_buff->sz_data = ntohl(cqe->byte_cnt);
+
+		if (unlikely(++m_qp_rec.debth == (int)safe_mce_sys().qp_compensation_level)) {
+			compensate_qp_poll_success(m_rx_hot_buff);
+			/*if (unlikely(!compensate_qp_poll_success(m_rx_hot_buff))) {
+				m_rx_hot_buff = NULL;
+				return packets_num;
+			}*/
+		}
+		++packets_num;
+		*p_desc_lst = m_rx_hot_buff;
+		m_rx_hot_buff = NULL;
+	}  else {
+		compensate_qp_poll_failed();
+	}
+
+	return packets_num;
+
 }
 
 int cq_mgr::poll_and_process_helper_rx(uint64_t* p_cq_poll_sn, void* pv_fd_ready_array)
@@ -781,6 +820,7 @@ int cq_mgr::poll_and_process_helper_rx(uint64_t* p_cq_poll_sn, void* pv_fd_ready
 			m_rx_hot_buff = (mem_buf_desc_t*)(uintptr_t)m_qp->m_rq_wqe_idx_to_wrid[index];
 			m_rx_hot_buff->path.rx.context = this;
 			m_rx_hot_buff->path.rx.is_vma_thr = false;
+			m_rx_hot_buff->path.rx.vma_polled = false;
 		}
 	} else {
 		volatile mlx5_cqe64 *cqe = mlx5_get_cqe64();
