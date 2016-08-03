@@ -43,6 +43,7 @@
 #include <getopt.h>
 #include <assert.h>
 #include <sys/select.h>
+#include <sys/mman.h> /* mlock */
 #include <sys/time.h>
 #include <time.h>
 #include <signal.h>
@@ -61,13 +62,19 @@
 #define TIMESTAMP_ENABLED 0
 #endif
 #ifndef BLOCKING_READ_ENABLED
-#define BLOCKING_READ_ENABLED 1
+#define BLOCKING_READ_ENABLED 0
 #endif
 #ifndef BLOCKING_WRITE_ENABLED
-#define BLOCKING_WRITE_ENABLED 1
+#define BLOCKING_WRITE_ENABLED 0
 #endif
 #ifndef VMA_ZCOPY_ENABLED
 #define VMA_ZCOPY_ENABLED 0
+#endif
+#ifndef PONG_ENABLED
+#define PONG_ENABLED 0
+#endif
+#ifndef UDP_ENABLED
+#define UDP_ENABLED 0
 #endif
 
 
@@ -78,6 +85,7 @@ struct testbed_config {
 		MODE_RECEIVER
 	} mode;
 	struct sockaddr_in addr;
+	struct sockaddr_in bind_addr;
 	uint16_t port;
 	int scount;
 	int rcount;
@@ -95,6 +103,8 @@ struct testbed_config {
 #define NANOS_IN_SEC  1000000000L
 #define NANOS_IN_MSEC 1000000L
 #define NANOS_IN_USEC 1000L
+
+#define MAX_FD 1024
 
 #pragma pack(push, 1)
 struct msg_header {
@@ -168,16 +178,25 @@ static int _proc_receiver(void);
 static void _proc_signal(int signal_id);
 
 static inline int64_t _get_time_ns(void);
+static inline char *_addr2str(struct sockaddr_in *addr);
 static int _get_addr(char *dst, struct sockaddr_in *addr);
 static int _set_noblock(int fd);
-static int _tcp_client_init(struct sockaddr_in *addr);
-static int _tcp_server_init(int fd);
-static int _tcp_create_and_bind(uint16_t port);
-static int _tcp_write(int fd, uint8_t *buf, int count, int block);
+
+static int _write(int fd, uint8_t *buf, int count, int block);
 #if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
 #else
-static int _tcp_read(int fd, uint8_t *buf, int count, int block);
+static int _read(int fd, uint8_t *buf, int count, int block);
 #endif /* VMA_ZCOPY_ENABLED */
+
+#if defined(UDP_ENABLED) && (UDP_ENABLED == 1)
+static int _udp_client_init(struct sockaddr_in *addr);
+static int _udp_server_init(int fd);
+static int _udp_create_and_bind(struct sockaddr_in *addr);
+#else
+static int _tcp_client_init(struct sockaddr_in *addr);
+static int _tcp_server_init(int fd);
+static int _tcp_create_and_bind(struct sockaddr_in *addr);
+#endif /* UDP_ENABLED */
 
 static void _ini_stat(void);
 static void _fin_stat(void);
@@ -200,6 +219,13 @@ static int _wb = 0;
 static struct vma_api_t *_vma_api = NULL;
 static int _vma_ring_fd = -1;
 #endif /* VMA_ZCOPY_ENABLED */
+
+#if defined(PONG_ENABLED) && (PONG_ENABLED == 1)
+#if defined(UDP_ENABLED) && (UDP_ENABLED == 0)
+static int _udp_create_and_bind(struct sockaddr_in *addr);
+#endif
+#define PONG_PORT		41794
+#endif /* PONG_ENABLED */
 
 int main(int argc, char **argv)
 {
@@ -300,6 +326,8 @@ static int _def_config(void)
 	memset(&_config, 0, sizeof(_config));
 	_config.mode = -1;
 	_config.port = 12345;
+	_config.bind_addr.sin_family = PF_INET;
+	_config.bind_addr.sin_addr.s_addr = INADDR_ANY;
 	_config.msg_size = 500;
 	_config.scount = 20;
 	_config.rcount = 10;
@@ -317,7 +345,7 @@ static int _set_config(int argc, char **argv)
 	static struct option long_options[] = {
 		{"engine",       required_argument, 0, MODE_ENGINE},
 		{"sender",       required_argument, 0, MODE_SENDER},
-		{"receiver",     no_argument,       0, MODE_RECEIVER},
+		{"receiver",     optional_argument, 0, MODE_RECEIVER},
 		{"port",         required_argument, 0, 'p'},
 		{"scount",       required_argument, 0, 's'},
 		{"rcount",       required_argument, 0, 'r'},
@@ -335,21 +363,34 @@ static int _set_config(int argc, char **argv)
 		switch (op) {
 			case MODE_ENGINE:
 			case MODE_SENDER:
-				if ((int)_config.mode < 0) {
-					rc = _get_addr(optarg, &_config.addr);
-					if (rc < 0) {
-						rc = -EINVAL;
-						log_fatal("Failed to resolve ip address\n");
-					}
-					_config.mode = op;
-				} else {
-					rc = -EINVAL;
-					log_error("Wrong option usage \'%c\'\n", op);
-				}
-				break;
 			case MODE_RECEIVER:
 				if ((int)_config.mode < 0) {
-					_config.mode = MODE_RECEIVER;
+					char *token1 = NULL;
+					char *token2 = NULL;
+					const char s[2] = ":";
+					if (optarg) {
+						if (optarg[0] != ':') {
+							token1 = strtok(optarg, s);
+							token2 = strtok(NULL, s);
+						} else {
+							token1 = NULL;
+							token2 = strtok(optarg, s);
+						}
+					}
+
+					if (token1) {
+						rc = _get_addr(token1, &_config.addr);
+						if (rc < 0) {
+							rc = -EINVAL;
+							log_fatal("Failed to resolve ip address %s\n", token1);
+						}
+					}
+					if (token2) {
+						if (0 == inet_aton(token2, &_config.bind_addr.sin_addr)) {
+							log_fatal("Failed to resolve ip address %s\n", token2);
+						}
+					}
+					_config.mode = op;
 				} else {
 					rc = -EINVAL;
 					log_error("Wrong option usage \'%c\'\n", op);
@@ -442,6 +483,8 @@ static int _set_config(int argc, char **argv)
 	if (0 != rc) {
 		_usage();
 	} else {
+		_config.addr.sin_port = htons(_config.port);
+		_config.bind_addr.sin_port = htons(_config.port);
 		log_info("CONFIGURATION:\n");
 		log_info("mode: %d\n", _config.mode);
 		log_info("senders: %d\n", _config.scount);
@@ -451,6 +494,8 @@ static int _set_config(int argc, char **argv)
 		log_info("msg count: %d\n", _config.msg_count);
 		log_info("msg rate: %d\n", _config.msg_rate);
 		log_info("msg skip: %d\n", _config.msg_skip);
+		log_info("connect to ip: %s\n", _addr2str(&_config.addr));
+		log_info("listen on ip: %s\n", _addr2str(&_config.bind_addr));
 	}
 
 	return rc;
@@ -471,25 +516,32 @@ static int _proc_sender(void)
 			int64_t begin_send_time;
 		} stat;
 		uint8_t msg[1];
-	} *conns = NULL;
+	} *conns_out = NULL;
 	struct per_sender_connection *stat;
 	struct msg_header *msg_hdr;
 	int i;
 	int total_msg_count;
 	int conns_size = sizeof(struct conn_info) + _config.msg_size + 1;
+#if defined(PONG_ENABLED) && (PONG_ENABLED == 1)
+	struct sockaddr_in addr;
+	memcpy(&addr, &_config.bind_addr, sizeof(addr));
+	addr.sin_port = htons(PONG_PORT);
+	int fd_pong = _udp_create_and_bind(&addr);
+	assert(fd_pong >= 0);
+#endif /* PONG_ENABLED */
 
 	log_trace("Launching <sender> mode...\n");
 
 	efd = epoll_create1(0);
 	assert(efd >= 0);
 
-	conns = calloc(_config.scount, conns_size);
-	assert(conns);
+	conns_out = calloc(_config.scount, conns_size);
+	assert(conns_out);
 	for (i = 0; i < _config.scount; i++) {
 		struct epoll_event event;
 		struct conn_info *conn;
 
-		conn = (struct conn_info *)((uint8_t *)conns + i * conns_size);
+		conn = (struct conn_info *)((uint8_t *)conns_out + i * conns_size);
 		conn->stat.msgs_sent = 0;
 		conn->stat.begin_send_time = 0;
 
@@ -502,7 +554,11 @@ static int _proc_sender(void)
 		msg_hdr->receiver = 0;
 
 		conn->id = i;
+#if defined(UDP_ENABLED) && (UDP_ENABLED == 1)
+		conn->fd = _udp_client_init(&_config.addr);
+#else
 		conn->fd = _tcp_client_init(&_config.addr);
+#endif /* UDP_ENABLED */
 		conn->msg_len = 0;
 		if (_done) {
 			goto err;
@@ -548,7 +604,11 @@ static int _proc_sender(void)
 				continue;
 			}
 
-			usleep(1);
+#if defined(PONG_ENABLED) && (PONG_ENABLED == 1)
+			recv(fd_pong, "pong", sizeof("pong"), 0);
+#else
+			usleep(0);
+#endif /* PONG_ENABLED */
 
 			if (event & EPOLLOUT) {
 				int fd;
@@ -586,7 +646,7 @@ static int _proc_sender(void)
 #endif /* TIMESTAMP_ENABLED */
 					}
 
-					ret = _tcp_write(fd,
+					ret = _write(fd,
 							((uint8_t *)msg_hdr) + conn->msg_len,
 							_config.msg_size - conn->msg_len, _wb);
 					if (ret < 0) {
@@ -628,16 +688,19 @@ static int _proc_sender(void)
 
 err:
 
-	if (conns) {
+	if (conns_out) {
 		for (i = 0; i < _config.scount; i++) {
 			struct conn_info *conn;
 
-			conn = (struct conn_info *)((uint8_t *)conns + i * conns_size);
+			conn = (struct conn_info *)((uint8_t *)conns_out + i * conns_size);
+#if defined(UDP_ENABLED) && (UDP_ENABLED == 1)
+			_write(conn->fd, (uint8_t *)"?", sizeof("?"), 0);
+#endif /* UDP_ENABLED */
 			epoll_ctl(efd, EPOLL_CTL_DEL, conn->fd, NULL);
 			close(conn->fd);
 			conn->fd = -1;
 		}
-		free(conns);
+		free(conns_out);
 	}
 
 	if (events) {
@@ -665,7 +728,7 @@ static int _proc_engine(void)
 #endif /* VMA_ZCOPY_ENABLED */
 		int msg_len;
 		uint8_t msg[1];
-	} *conns_out, *conns_in;
+	} *conns_out, **conns_in;
 	struct conn_info *conn = NULL;
 	struct msg_header *msg_hdr;
 	int i;
@@ -674,35 +737,52 @@ static int _proc_engine(void)
 
 	log_trace("Launching <engine> mode...\n");
 
+	conns_out = NULL;
+	conns_in = NULL;
 	efd = epoll_create1(0);
 	assert(efd >= 0);
 
-	sfd = _tcp_create_and_bind(_config.port);
+#if defined(UDP_ENABLED) && (UDP_ENABLED == 1)
+	sfd = _udp_create_and_bind(&_config.bind_addr);
+#else
+	sfd = _tcp_create_and_bind(&_config.bind_addr);
+#endif /* UDP_ENABLED */
 	if (sfd < 0) {
 		rc = -EBUSY;
 		log_fatal("Failed to create socket\n");
 		goto err;
 	}
 
-	listen(sfd, SOMAXCONN);
-#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
-	_vma_api->get_socket_rings_fds(sfd, &_vma_ring_fd, 1);
-	assert((-1)!=_vma_ring_fd);
-#endif /* VMA_ZCOPY_ENABLED */
-
-	conns_in = calloc(_config.scount, conns_size);
+	conns_in = calloc(MAX_FD, sizeof(*conns_in));
 	assert(conns_in);
 	for (i = 0; i < _config.scount; i++) {
 		struct epoll_event event;
+		int fd;
 
-		conn = (struct conn_info *)((uint8_t *)conns_in + i * conns_size);
+#if defined(UDP_ENABLED) && (UDP_ENABLED == 1)
+		fd = _udp_server_init(sfd);
+#else
+		fd = _tcp_server_init(sfd);
+#endif /* UDP_ENABLED */
+		if (fd >= MAX_FD) {
+			log_error("fd(%d) >= MAX_FD(%d)\n", fd, MAX_FD);
+			goto err;
+		}
+		conn = (struct conn_info *)calloc(1, conns_size);
+		assert(conn);
 
 		msg_hdr = (struct msg_header *)conn->msg;
 		msg_hdr->msg_type = MSG_BAD;
 
 		conn->id = i;
-		conn->fd = _tcp_server_init(sfd);
+		conn->fd = fd;
 		conn->msg_len = 0;
+#if defined(UDP_ENABLED) && (UDP_ENABLED == 1)
+		conns_in[i] = conn;
+#else
+		conns_in[fd] = conn;
+#endif /* UDP_ENABLED */
+
 		if (_done) {
 			goto err;
 		}
@@ -729,7 +809,11 @@ static int _proc_engine(void)
 		msg_hdr->msg_type = MSG_BAD;
 
 		conn->id = i;
+#if defined(UDP_ENABLED) && (UDP_ENABLED == 1)
+		conn->fd = _udp_client_init(&_config.addr);
+#else
 		conn->fd = _tcp_client_init(&_config.addr);
+#endif /* UDP_ENABLED */
 		conn->msg_len = 0;
 		if (_done) {
 			goto err;
@@ -765,34 +849,39 @@ static int _proc_engine(void)
 				n = 0;
 			}
 		}
-		while(0 == n) {
+		while (0 == n) {
 			struct vma_completion_t vma_comps;
 			n = _vma_api->vma_poll(_vma_ring_fd, &vma_comps, 1, 0);
 			if (n > 0) {
+				event = (uint32_t)vma_comps.events;
 				if (vma_comps.events & VMA_POLL_PACKET) {
-					int k = 0;
 					event |= EPOLLIN;
+#if defined(UDP_ENABLED) && (UDP_ENABLED == 1)
 					if (vma_comps.packet.buff_lst->len >= sizeof(struct msg_header)) {
 						msg_hdr = (struct msg_header *)vma_comps.packet.buff_lst->payload;
-						conn = (struct conn_info *)((uint8_t *)conns_in + msg_hdr->client_id * conns_size);
+						vma_comps.user_data = msg_hdr->client_id;
 					} else {
-						for (k = 0; k < _config.rcount; k++) {
-							conn = (struct conn_info *)((uint8_t *)conns_in + k * conns_size);
-							if (conn->fd == vma_comps.user_data) {
-								break;
-							}
-						}
+						event |= EPOLLERR;
+						log_error("event=0x%x user_data size=%d\n", event, vma_comps.packet.buff_lst->len);
+						log_error("EOF?\n");
+						goto err;
 					}
+#endif /* UDP_ENABLED */
+					conn = conns_in[vma_comps.user_data];
 					conn->vma_packet.num_bufs = vma_comps.packet.num_bufs;
 					conn->vma_packet.total_len = vma_comps.packet.total_len;
 					conn->vma_packet.buff_lst = vma_comps.packet.buff_lst;
 					conn->vma_buf = conn->vma_packet.buff_lst;
 					conn->vma_buf_offset = 0;
-				} else {
+				} else if ((event & EPOLLERR) || (event & EPOLLRDHUP) ||
+						(event & EPOLLHUP)) {
 					event |= EPOLLERR;
-					log_error("vma_comps->events=%ld user_data=%ld\n", vma_comps.events, vma_comps.user_data);
+					log_error("event=0x%x user_data=%ld\n", event, vma_comps.user_data);
 					log_error("EOF?\n");
 					goto err;
+				} else {
+					log_warn("event=0x%x user_data=%ld\n", event, vma_comps.user_data);
+					n = 0;
 				}
 			}
 		}
@@ -825,12 +914,12 @@ static int _proc_engine(void)
 
 #if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
 				ret = _min((_config.msg_size - conn->msg_len), (conn->vma_buf->len - conn->vma_buf_offset));
-				memcpy(msg_hdr,
+				memcpy(((uint8_t *)msg_hdr) + conn->msg_len,
 						((uint8_t *)conn->vma_buf->payload) + conn->vma_buf_offset,
 						ret);
 				conn->vma_buf_offset += ret;
 #else
-				ret = _tcp_read(fd,
+				ret = _read(fd,
 						((uint8_t *)msg_hdr) + conn->msg_len,
 						_config.msg_size - conn->msg_len, _wb);
 #endif /* VMA_ZCOPY_ENABLED */
@@ -851,7 +940,7 @@ static int _proc_engine(void)
 				msg_hdr->msg_type = MSG_OUT;
 				conn_peer = (struct conn_info *)((uint8_t *)conns_out + msg_hdr->receiver * conns_size);
 				/* use blocking operation */
-				ret = _tcp_write(conn_peer->fd, (uint8_t *)msg_hdr, msg_hdr->len, 1);
+				ret = _write(conn_peer->fd, (uint8_t *)msg_hdr, msg_hdr->len, 1);
 				log_trace("<engine> [%d]-> Send %d bytes fd=%d ret=%d\n",
 						msg_hdr->receiver, msg_hdr->len, conn_peer->fd, ret);
 				if (ret != msg_hdr->len) {
@@ -867,16 +956,19 @@ err:
 	close(sfd);
 
 	if (conns_in) {
-		for (i = 0; i < _config.scount; i++) {
+		for (i = 0; i < MAX_FD; i++) {
 			struct conn_info *conn;
 
-			conn = (struct conn_info *)((uint8_t *)conns_in + i * conns_size);
+			conn = conns_in[i];
+			if (conn) {
 #if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
 #else
-			epoll_ctl(efd, EPOLL_CTL_DEL, conn->fd, NULL);
+				epoll_ctl(efd, EPOLL_CTL_DEL, conn->fd, NULL);
 #endif /* VMA_ZCOPY_ENABLED */
-			close(conn->fd);
-			conn->fd = -1;
+				close(conn->fd);
+				conn->fd = -1;
+				free(conn);
+			}
 		}
 		free(conns_in);
 	}
@@ -886,6 +978,9 @@ err:
 			struct conn_info *conn;
 
 			conn = (struct conn_info *)((uint8_t *)conns_out + i * conns_size);
+#if defined(UDP_ENABLED) && (UDP_ENABLED == 1)
+			_write(conn->fd, (uint8_t *)"?", sizeof("?"), 0);
+#endif /* UDP_ENABLED */
 			epoll_ctl(efd, EPOLL_CTL_DEL, conn->fd, NULL);
 			close(conn->fd);
 			conn->fd = -1;
@@ -918,7 +1013,7 @@ static int _proc_receiver(void)
 #endif /* VMA_ZCOPY_ENABLED */
 		int msg_len;
 		uint8_t msg[1];
-	} *conns;
+	} **conns_in = NULL;
 	struct conn_info *conn;
 	struct msg_header *msg_hdr;
 	int i;
@@ -930,29 +1025,44 @@ static int _proc_receiver(void)
 	efd = epoll_create1(0);
 	assert(efd >= 0);
 
-	sfd = _tcp_create_and_bind(_config.port);
+#if defined(UDP_ENABLED) && (UDP_ENABLED == 1)
+	sfd = _udp_create_and_bind(&_config.bind_addr);
+#else
+	sfd = _tcp_create_and_bind(&_config.bind_addr);
+#endif /* UDP_ENABLED */
 	if (sfd < 0) {
 		rc = -EBUSY;
 		log_fatal("Failed to create socket\n");
 		goto err;
 	}
 
-	listen(sfd, SOMAXCONN);
-#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
-	_vma_api->get_socket_rings_fds(sfd, &_vma_ring_fd, 1);
-	assert((-1)!=_vma_ring_fd);
-#endif /* VMA_ZCOPY_ENABLED */
-
-	conns = calloc(_config.rcount, conns_size);
-	assert(conns);
+	conns_in = calloc(MAX_FD, sizeof(*conns_in));
+	assert(conns_in);
 	for (i = 0; i < _config.rcount; i++) {
 		struct epoll_event event;
+		int fd;
 
-		conn = (struct conn_info *)((uint8_t *)conns + i * conns_size);
+#if defined(UDP_ENABLED) && (UDP_ENABLED == 1)
+		fd = _udp_server_init(sfd);
+#else
+		fd = _tcp_server_init(sfd);
+#endif /* UDP_ENABLED */
+		if (fd >= MAX_FD) {
+			log_error("fd(%d) >= MAX_FD(%d)\n", fd, MAX_FD);
+			goto err;
+		}
+		conn = (struct conn_info *)calloc(1, conns_size);
+		assert(conn);
 
 		conn->id = i;
-		conn->fd = _tcp_server_init(sfd);
+		conn->fd = fd;
 		conn->msg_len = 0;
+#if defined(UDP_ENABLED) && (UDP_ENABLED == 1)
+		conns_in[i] = conn;
+#else
+		conns_in[fd] = conn;
+#endif /* UDP_ENABLED */
+
 		if (_done) {
 			goto err;
 		}
@@ -996,34 +1106,39 @@ static int _proc_receiver(void)
 				n = 0;
 			}
 		}
-		while(0 == n) {
+		while (0 == n) {
 			struct vma_completion_t vma_comps;
 			n = _vma_api->vma_poll(_vma_ring_fd, &vma_comps, 1, 0);
 			if (n > 0) {
+				event = (uint32_t)vma_comps.events;
 				if (vma_comps.events & VMA_POLL_PACKET) {
-					int k = 0;
 					event |= EPOLLIN;
+#if defined(UDP_ENABLED) && (UDP_ENABLED == 1)
 					if (vma_comps.packet.buff_lst->len >= sizeof(struct msg_header)) {
 						msg_hdr = (struct msg_header *)vma_comps.packet.buff_lst->payload;
-						conn = (struct conn_info *)((uint8_t *)conns + msg_hdr->receiver * conns_size);
+						vma_comps.user_data = msg_hdr->receiver;
 					} else {
-						for (k = 0; k < _config.rcount; k++) {
-							conn = (struct conn_info *)((uint8_t *)conns + k * conns_size);
-							if (conn->fd == vma_comps.user_data) {
-								break;
-							}
-						}
+						event |= EPOLLERR;
+						log_error("event=0x%x user_data size=%d\n", event, vma_comps.packet.buff_lst->len);
+						log_error("EOF?\n");
+						goto err;
 					}
+#endif /* UDP_ENABLED */
+					conn = conns_in[vma_comps.user_data];
 					conn->vma_packet.num_bufs = vma_comps.packet.num_bufs;
 					conn->vma_packet.total_len = vma_comps.packet.total_len;
 					conn->vma_packet.buff_lst = vma_comps.packet.buff_lst;
 					conn->vma_buf = conn->vma_packet.buff_lst;
 					conn->vma_buf_offset = 0;
-				} else {
+				} else if ((event & EPOLLERR) || (event & EPOLLRDHUP) ||
+						(event & EPOLLHUP)) {
 					event |= EPOLLERR;
-					log_error("vma_comps->events=%ld user_data=%ld\n", vma_comps.events, vma_comps.user_data);
+					log_error("event=0x%x user_data=%ld\n", event, vma_comps.user_data);
 					log_error("EOF?\n");
 					goto err;
+				} else {
+					log_warn("event=0x%x user_data=%ld\n", event, vma_comps.user_data);
+					n = 0;
 				}
 			}
 		}
@@ -1053,12 +1168,12 @@ static int _proc_receiver(void)
 			if (event & EPOLLIN) {
 #if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
 				ret = _min((_config.msg_size - conn->msg_len), (conn->vma_buf->len - conn->vma_buf_offset));
-				memcpy(msg_hdr,
+				memcpy(((uint8_t *)msg_hdr) + conn->msg_len,
 						((uint8_t *)conn->vma_buf->payload) + conn->vma_buf_offset,
 						ret);
 				conn->vma_buf_offset += ret;
 #else
-				ret = _tcp_read(fd,
+				ret = _read(fd,
 						((uint8_t *)msg_hdr) + conn->msg_len,
 						_config.msg_size - conn->msg_len, _rb);
 #endif /* VMA_ZCOPY_ENABLED */
@@ -1088,19 +1203,22 @@ err:
 
 	close(sfd);
 
-	if (conns) {
-		for (i = 0; i < _config.rcount; i++) {
+	if (conns_in) {
+		for (i = 0; i < MAX_FD; i++) {
 			struct conn_info *conn;
 
-			conn = (struct conn_info *)((uint8_t *)conns + i * conns_size);
+			conn = conns_in[i];
+			if (conn) {
 #if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
 #else
-			epoll_ctl(efd, EPOLL_CTL_DEL, conn->fd, NULL);
+				epoll_ctl(efd, EPOLL_CTL_DEL, conn->fd, NULL);
 #endif /* VMA_ZCOPY_ENABLED */
-			close(conn->fd);
-			conn->fd = -1;
+				close(conn->fd);
+				conn->fd = -1;
+				free(conn);
+			}
 		}
-		free(conns);
+		free(conns_in);
 	}
 
 	if (events) {
@@ -1204,6 +1322,15 @@ static inline int64_t _get_time_ns(void)
 #endif /* TIMESTAMP_RDTSC */
 }
 
+static inline char *_addr2str(struct sockaddr_in *addr)
+{
+	static __thread char addrbuf[100];
+	inet_ntop(AF_INET, &addr->sin_addr, addrbuf, sizeof(addrbuf));
+	sprintf(addrbuf,"%s:%d", addrbuf, ntohs(addr->sin_port));
+
+	return addrbuf;
+}
+
 static int _get_addr(char *dst, struct sockaddr_in *addr)
 {
 	int rc = 0;
@@ -1246,6 +1373,108 @@ static int _set_noblock(int fd)
 	return rc;
 }
 
+
+#if defined(UDP_ENABLED) && (UDP_ENABLED == 1)
+static int _udp_client_init(struct sockaddr_in *addr)
+{
+	int rc = 0;
+	int fd = -1;
+	struct sockaddr_in bind_addr;
+
+	memcpy(&bind_addr, &_config.bind_addr, sizeof(bind_addr));
+	bind_addr.sin_port = 0;
+
+	fd = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP);
+	if (!fd) {
+		rc = -EBUSY;
+		log_fatal("Failed to create socket\n");
+		goto err;
+	}
+
+	rc = _set_noblock(fd);
+	if (rc < 0) {
+		log_error("Configure failed: %s\n", strerror(errno));
+		goto err;
+	}
+
+	rc = bind(fd, (struct sockaddr *) &bind_addr, sizeof(bind_addr));
+	if (rc < 0) {
+		rc = -EBUSY;
+		log_fatal("Failed to bind socket\n");
+		goto err;
+	}
+
+	rc = connect(fd, (struct sockaddr *)addr, sizeof(*addr));
+	if (rc < 0 && errno != EINPROGRESS) {
+		log_error("Connect failed: %s\n", strerror(errno));
+		goto err;
+	}
+
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+	/* Need to get ring after listen() or nonblocking connect() */
+	if (_vma_ring_fd < 0) {
+		_vma_api->get_socket_rings_fds(fd, &_vma_ring_fd, 1);
+		assert((-1) != _vma_ring_fd);
+	}
+#endif /* VMA_ZCOPY_ENABLED */
+
+	log_trace("Established connection: fd=%d to %s\n", fd, _addr2str(addr));
+
+err:
+	return (rc == 0 ? fd : (-1));
+}
+
+static int _udp_server_init(int fd)
+{
+
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+	/* Need to get ring after listen() or nonblocking connect() */
+	if (_vma_ring_fd < 0) {
+		_vma_api->get_socket_rings_fds(fd, &_vma_ring_fd, 1);
+		assert((-1) != _vma_ring_fd);
+	}
+#endif /* VMA_ZCOPY_ENABLED */
+
+	return fd;
+}
+
+static int _udp_create_and_bind(struct sockaddr_in *addr)
+{
+	int rc = 0;
+	int fd;
+	int flag;
+
+	fd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (!fd) {
+		rc = -EBUSY;
+		log_fatal("Failed to create socket\n");
+		goto err;
+	}
+
+	flag = 1;
+	rc = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char *) &flag, sizeof(int));
+	if (rc < 0) {
+		log_error("Failed to setsockopt: %s\n", strerror(errno));
+		goto err;
+	}
+
+	rc = _set_noblock(fd);
+	if (rc < 0) {
+		log_error("Failed to nonblocking: %s\n", strerror(errno));
+		goto err;
+	}
+
+	rc = bind(fd, (struct sockaddr *) addr, sizeof(*addr));
+	if (rc < 0) {
+		rc = -EBUSY;
+		log_fatal("Failed to bind socket\n");
+		goto err;
+	}
+
+err:
+	return (rc == 0 ? fd : (-1));
+}
+#else
 static int _tcp_client_init(struct sockaddr_in *addr)
 {
 	int rc = 0;
@@ -1258,7 +1487,6 @@ static int _tcp_client_init(struct sockaddr_in *addr)
 		log_fatal("Failed to create socket\n");
 		goto err;
 	}
-	addr->sin_port = htons(_config.port);
 
 	flag = 1;
 	rc = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (char *) &flag, sizeof(int));
@@ -1267,13 +1495,81 @@ static int _tcp_client_init(struct sockaddr_in *addr)
 		goto err;
 	}
 
-	rc = connect(fd, (struct sockaddr *)addr, sizeof(*addr));
+	rc = _set_noblock(fd);
 	if (rc < 0) {
+		log_error("Configure failed: %s\n", strerror(errno));
+		goto err;
+	}
+
+	rc = connect(fd, (struct sockaddr *)addr, sizeof(*addr));
+	if (rc < 0 && errno != EINPROGRESS) {
 		log_error("Connect failed: %s\n", strerror(errno));
 		goto err;
 	}
 
-	rc = _set_noblock(fd);
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+	/* Need to get ring after listen() or nonblocking connect() */
+	if (_vma_ring_fd < 0) {
+		_vma_api->get_socket_rings_fds(fd, &_vma_ring_fd, 1);
+		assert((-1) != _vma_ring_fd);
+	}
+#endif /* VMA_ZCOPY_ENABLED */
+
+	/* do this for non-blocking socket */
+	rc = 0;
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+	while (0 == rc) {
+		uint32_t event;
+		struct vma_completion_t vma_comps;
+		rc = _vma_api->vma_poll(_vma_ring_fd, &vma_comps, 1, 0);
+		if (rc > 0) {
+			event = (uint32_t)vma_comps.events;
+			if (vma_comps.events & EPOLLOUT) {
+				fd = vma_comps.user_data;
+				rc = 0;
+				break;
+			} else {
+				log_warn("event=0x%x user_data=%ld\n", event, vma_comps.user_data);
+				rc = 0;
+			}
+		}
+	}
+#else
+	/* wait for setting connection */
+	if (0) {
+		fd_set rset, wset;
+		FD_ZERO(&rset);
+		FD_SET(fd, &rset);
+		wset = rset;
+
+		if (select(fd + 1, &rset, &wset, NULL, NULL) == 0) {
+			close(fd);
+			errno = ETIMEDOUT;
+			rc = -ETIMEDOUT;
+			log_error("select failed: %s\n", strerror(errno));
+			goto err;
+		}
+	} else {
+		int efd;
+		struct epoll_event event;
+		int n;
+		struct epoll_event events[10];
+
+		efd = epoll_create1(0);
+		event.events = EPOLLOUT | EPOLLIN;
+		event.data.fd = fd;
+		rc = epoll_ctl(efd, EPOLL_CTL_ADD, fd, &event);
+		n = epoll_wait(efd, events, 10, -1);
+		epoll_ctl(efd, EPOLL_CTL_DEL, fd, NULL);
+		close(efd);
+		if (n <= 0 || events[0].events != EPOLLOUT || events[0].data.fd != fd) {
+			log_error("epoll_wait event=0x%x fd=%d\n", events[0].events, events[0].data.fd);
+			goto err;
+		}
+	}
+#endif /* VMA_ZCOPY_ENABLED */
+
+	log_trace("Established connection: fd=%d to %s\n", fd, _addr2str(addr));
 
 err:
 	return (rc == 0 ? fd : (-1));
@@ -1286,12 +1582,41 @@ static int _tcp_server_init(int fd)
 	socklen_t in_len;
 	int flag;
 
+	/* Need to get ring after listen() or nonblocking connect() */
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+	if (_vma_ring_fd < 0) {
+		_vma_api->get_socket_rings_fds(fd, &_vma_ring_fd, 1);
+		assert((-1) != _vma_ring_fd);
+	}
+#endif /* VMA_ZCOPY_ENABLED */
+
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+	while (0 == rc) {
+		uint32_t event;
+		struct vma_completion_t vma_comps;
+		rc = _vma_api->vma_poll(_vma_ring_fd, &vma_comps, 1, 0);
+		if (rc > 0) {
+			event = (uint32_t)vma_comps.events;
+			if (vma_comps.events & VMA_POLL_NEW_CONNECTION_ACCEPTED) {
+				fd = vma_comps.user_data;
+				in_len = sizeof(in_addr);
+				memcpy(&in_addr, &vma_comps.src, in_len);
+			} else {
+				log_warn("event=0x%x user_data=%ld\n", event, vma_comps.user_data);
+				rc = 0;
+			}
+		}
+	}
+#else
 	in_len = sizeof(in_addr);
 	fd = accept(fd, &in_addr, &in_len);
 	if (fd < 0) {
 		log_error("Accept failed: %s\n", strerror(errno));
 		goto err;
 	}
+#endif /* VMA_ZCOPY_ENABLED */
+
+	log_trace("Accepted connection: fd=%d from %s\n", fd, _addr2str((struct sockaddr_in *)&in_addr));
 
 	flag = 1;
 	rc = setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (char *) &flag, sizeof(int));
@@ -1306,11 +1631,10 @@ err:
 	return fd;
 }
 
-static int _tcp_create_and_bind(uint16_t port)
+static int _tcp_create_and_bind(struct sockaddr_in *addr)
 {
 	int rc = 0;
 	int fd;
-	struct sockaddr_in addr;
 	int flag;
 
 	fd = socket(PF_INET, SOCK_STREAM, IPPROTO_IP);
@@ -1320,12 +1644,6 @@ static int _tcp_create_and_bind(uint16_t port)
 		goto err;
 	}
 
-	/* listen on any port */
-	memset(&addr, sizeof(addr), 0);
-	addr.sin_family = PF_INET;
-	addr.sin_addr.s_addr = INADDR_ANY;
-	addr.sin_port = htons(port);
-
 	flag = 1;
 	rc = setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char *) &flag, sizeof(int));
 	if (rc < 0) {
@@ -1333,18 +1651,21 @@ static int _tcp_create_and_bind(uint16_t port)
 		goto err;
 	}
 
-	rc = bind(fd, (struct sockaddr *) &addr, sizeof(addr));
+	rc = bind(fd, (struct sockaddr *) addr, sizeof(*addr));
 	if (rc < 0) {
 		rc = -EBUSY;
 		log_fatal("Failed to bind socket\n");
 		goto err;
 	}
 
+	listen(fd, SOMAXCONN);
+
 err:
 	return (rc == 0 ? fd : (-1));
 }
+#endif /* UDP_ENABLED */
 
-static int _tcp_write(int fd, uint8_t *buf, int count, int block)
+static int _write(int fd, uint8_t *buf, int count, int block)
 {
 	int n, nb;
 
@@ -1374,7 +1695,7 @@ static int _tcp_write(int fd, uint8_t *buf, int count, int block)
 
 #if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
 #else
-static int _tcp_read(int fd, uint8_t *buf, int count, int block)
+static int _read(int fd, uint8_t *buf, int count, int block)
 {
 	int n;
 	int nb;
@@ -1413,14 +1734,17 @@ static void _ini_stat(void)
 	memset(&_stat, 0, sizeof(_stat));
 
 #if defined(TIMESTAMP_ENABLED) && (TIMESTAMP_ENABLED == 1)
-	_stat.count = 0;
-	_stat.size = _config.scount * (_config.msg_count < 0 ? 10000 : _config.msg_count);
-	_stat.data = malloc(_stat.size * sizeof(*_stat.data) + _config.msg_size);
-	if (!_stat.data) {
-		log_fatal("Can not allocate memory for statistic\n");
-		exit(1);
+	if (_config.mode == MODE_RECEIVER) {
+		_stat.count = 0;
+		_stat.size = _config.scount * (_config.msg_count < 0 ? 10000 : _config.msg_count);
+		_stat.data = malloc(_stat.size * sizeof(*_stat.data) + _config.msg_size);
+		if (!_stat.data) {
+			log_fatal("Can not allocate memory for statistic\n");
+			exit(1);
+		}
+		memset(_stat.data, 0, _stat.size * sizeof(*_stat.data) + _config.msg_size);
+		mlock(_stat.data, _stat.size * sizeof(*_stat.data) + _config.msg_size);
 	}
-	memset(_stat.data, 0, _stat.size * sizeof(*_stat.data) + _config.msg_size);
 #endif /* TIMESTAMP_ENABLED */
 }
 
@@ -1485,6 +1809,10 @@ static void _fin_stat(void)
 			log_info("Total %lu observations\n", (long unsigned)values_count);
 		}
 		free(values);
+		if (_stat.data) {
+			munlock(_stat.data, _stat.size * sizeof(*_stat.data) + _config.msg_size);
+			free(_stat.data);
+		}
 	}
 #endif /* TIMESTAMP_ENABLED */
 }

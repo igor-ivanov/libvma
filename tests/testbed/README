@@ -9,6 +9,7 @@ program at a specific message rate.
 How to compile:
 
 - gcc testbed.c -o testbed.out -g -Wall -Werror -DTIMESTAMP_ENABLED=1 -DTIMESTAMP_RDTSC=1 -DNDEBUG -lrt
+- gcc testbed.c -o testbed.out -g -Wall -DTIMESTAMP_ENABLED=1 -DTIMESTAMP_RDTSC=1 -DVMA_ZCOPY_ENABLED=1 -DUDP_ENABLED=1 -I/include -L/lib -lrt –lvma
 
 Compilation options:
 
@@ -20,10 +21,24 @@ Compilation options:
 
  -DNDEBUG – ON/OFF assert() and log_trace()
 
+ -VMA_ZCOPY_ENABLED=1 - vma_poll() usage
+ -VMA_ZCOPY_ENABLED=0 (default)
+
+ -PONG_ENABLED=1
+ -PONG_ENABLED=0 (default)
+
+ -UDP_ENABLED=1 - vma_poll() UDP usage
+ -UDP_ENABLED=0 (default)
+
 How to use:
 
  ./testbed.out --help
+
+Pay attention on new values for modes.
+--<sender|engine|receiver>=X:Y
+X – send to IP
+Y – bind to IP (to avoid ANY_ADDR)
  
- ./testbed.out --receiver         --scount=20 --rcount=10 --msg-size=500 --msg-rate=2000 -d4 -n8000
- ./testbed.out --engine=10.0.0.9  --scount=20 --rcount=10 --msg-size=500 --msg-rate=2000 -d4 -n8000
- ./testbed.out --sender=10.0.0.10 --scount=20 --rcount=10 --msg-size=500 --msg-rate=2000 -d4 -n8000
+ ./testbed.out --receiver=:4.4.4.15       --scount=20 --rcount=10 --msg-size=500 --msg-rate=2000 -d4 -n8000
+ ./testbed.out --engine=4.4.4.15:4.4.4.16 --scount=20 --rcount=10 --msg-size=500 --msg-rate=2000 -d4 -n8000
+ ./testbed.out --sender=4.4.4.16:4.4.4.15 --scount=20 --rcount=10 --msg-size=500 --msg-rate=2000 -d4 -n8000
