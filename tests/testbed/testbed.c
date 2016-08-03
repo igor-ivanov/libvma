@@ -14,6 +14,9 @@
  * -DTIMESTAMP_RDTSC=1 - rdtsc based time  (default)
  * -DTIMESTAMP_RDTSC=0 - clock_gettime()
  *
+ * -DVMA_ZCOPY_ENABLED=1
+ * -DVMA_ZCOPY_ENABLED=0 (default)
+ *
  * -DNDEBUG – ON/OFF assert and log_trace()
  *
  * How to use:
@@ -40,11 +43,13 @@
 #include <getopt.h>
 #include <assert.h>
 #include <sys/select.h>
-#include <sys/mman.h> /* mlock */
 #include <sys/time.h>
 #include <time.h>
 #include <signal.h>
 #include <sys/epoll.h>
+#if  defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+#include <mellanox/vma_extra.h>
+#endif /* VMA_ZCOPY_ENABLED */
 
 #ifndef __LINUX__
 #define __LINUX__
@@ -60,6 +65,9 @@
 #endif
 #ifndef BLOCKING_WRITE_ENABLED
 #define BLOCKING_WRITE_ENABLED 1
+#endif
+#ifndef VMA_ZCOPY_ENABLED
+#define VMA_ZCOPY_ENABLED 0
 #endif
 
 
@@ -166,7 +174,10 @@ static int _tcp_client_init(struct sockaddr_in *addr);
 static int _tcp_server_init(int fd);
 static int _tcp_create_and_bind(uint16_t port);
 static int _tcp_write(int fd, uint8_t *buf, int count, int block);
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+#else
 static int _tcp_read(int fd, uint8_t *buf, int count, int block);
+#endif /* VMA_ZCOPY_ENABLED */
 
 static void _ini_stat(void);
 static void _fin_stat(void);
@@ -185,6 +196,10 @@ static int _wb = 1;
 static int _wb = 0;
 #endif /* BLOCKING_WRITE_ENABLED */
 
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+static struct vma_api_t *_vma_api = NULL;
+static int _vma_ring_fd = -1;
+#endif /* VMA_ZCOPY_ENABLED */
 
 int main(int argc, char **argv)
 {
@@ -219,6 +234,13 @@ int main(int argc, char **argv)
 	if (sigaction(SIGINT, &sa, NULL) != 0) {
 		goto err;
 	}
+
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+	_vma_api = vma_get_api();
+	if (_vma_api == NULL) {
+		log_fatal("VMA Extra API not found\n");
+	}
+#endif /* VMA_ZCOPY_ENABLED */
 
 	_done = 0;
 	_ini_stat();
@@ -526,7 +548,7 @@ static int _proc_sender(void)
 				continue;
 			}
 
-			usleep(0);
+			usleep(1);
 
 			if (event & EPOLLOUT) {
 				int fd;
@@ -636,6 +658,11 @@ static int _proc_engine(void)
 	struct conn_info {
 		int id;
 		int fd;
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+		struct vma_packet_desc_t vma_packet;
+		struct vma_buff_t *vma_buf;
+		int vma_buf_offset;
+#endif /* VMA_ZCOPY_ENABLED */
 		int msg_len;
 		uint8_t msg[1];
 	} *conns_out, *conns_in;
@@ -647,7 +674,6 @@ static int _proc_engine(void)
 
 	log_trace("Launching <engine> mode...\n");
 
-	conns_out = conns_in = NULL;
 	efd = epoll_create1(0);
 	assert(efd >= 0);
 
@@ -659,6 +685,10 @@ static int _proc_engine(void)
 	}
 
 	listen(sfd, SOMAXCONN);
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+	_vma_api->get_socket_rings_fds(sfd, &_vma_ring_fd, 1);
+	assert((-1)!=_vma_ring_fd);
+#endif /* VMA_ZCOPY_ENABLED */
 
 	conns_in = calloc(_config.scount, conns_size);
 	assert(conns_in);
@@ -680,8 +710,12 @@ static int _proc_engine(void)
 
 		event.data.ptr = conn;
 		event.events = EPOLLIN;
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+		event = event;
+#else
 		rc = epoll_ctl(efd, EPOLL_CTL_ADD, conn->fd, &event);
 		assert(rc == 0);
+#endif /* VMA_ZCOPY_ENABLED */
 	}
 
 	log_trace("<engine> established %d connections with <sender>\n", _config.scount);
@@ -715,15 +749,67 @@ static int _proc_engine(void)
 		int n = 0;
 		int j = 0;
 
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+		if (conn) {
+			if (conn->vma_buf && (conn->vma_buf_offset < conn->vma_buf->len)) {
+				n = 1;
+			} else if (conn->vma_buf && conn->vma_buf->next) {
+				conn->vma_buf = conn->vma_buf->next;
+				conn->vma_buf_offset = 0;
+				n = 1;
+			} else if (conn->vma_buf && !conn->vma_buf->next) {
+				_vma_api->free_vma_packets(&conn->vma_packet, 1);
+				conn->vma_buf = NULL;
+				conn->vma_buf_offset = 0;
+				conn = NULL;
+				n = 0;
+			}
+		}
+		while(0 == n) {
+			struct vma_completion_t vma_comps;
+			n = _vma_api->vma_poll(_vma_ring_fd, &vma_comps, 1, 0);
+			if (n > 0) {
+				if (vma_comps.events & VMA_POLL_PACKET) {
+					int k = 0;
+					event |= EPOLLIN;
+					if (vma_comps.packet.buff_lst->len >= sizeof(struct msg_header)) {
+						msg_hdr = (struct msg_header *)vma_comps.packet.buff_lst->payload;
+						conn = (struct conn_info *)((uint8_t *)conns_in + msg_hdr->client_id * conns_size);
+					} else {
+						for (k = 0; k < _config.rcount; k++) {
+							conn = (struct conn_info *)((uint8_t *)conns_in + k * conns_size);
+							if (conn->fd == vma_comps.user_data) {
+								break;
+							}
+						}
+					}
+					conn->vma_packet.num_bufs = vma_comps.packet.num_bufs;
+					conn->vma_packet.total_len = vma_comps.packet.total_len;
+					conn->vma_packet.buff_lst = vma_comps.packet.buff_lst;
+					conn->vma_buf = conn->vma_packet.buff_lst;
+					conn->vma_buf_offset = 0;
+				} else {
+					event |= EPOLLERR;
+					log_error("vma_comps->events=%ld user_data=%ld\n", vma_comps.events, vma_comps.user_data);
+					log_error("EOF?\n");
+					goto err;
+				}
+			}
+		}
+#else
 		n = epoll_wait(efd, events, max_events, 0);
+#endif /* VMA_ZCOPY_ENABLED */
 
 		for (j = 0; j < n; j++) {
 			int fd = 0;
 			int ret = 0;
 
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+#else
 			event = events[j].events;
 			conn = (struct conn_info *)events[j].data.ptr;
 			assert(conn);
+#endif /* VMA_ZCOPY_ENABLED */
 
 			fd = conn->fd;
 			msg_hdr = (struct msg_header *)conn->msg;
@@ -737,9 +823,17 @@ static int _proc_engine(void)
 			if (event & EPOLLIN) {
 				struct conn_info *conn_peer = NULL;
 
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+				ret = _min((_config.msg_size - conn->msg_len), (conn->vma_buf->len - conn->vma_buf_offset));
+				memcpy(msg_hdr,
+						((uint8_t *)conn->vma_buf->payload) + conn->vma_buf_offset,
+						ret);
+				conn->vma_buf_offset += ret;
+#else
 				ret = _tcp_read(fd,
 						((uint8_t *)msg_hdr) + conn->msg_len,
 						_config.msg_size - conn->msg_len, _wb);
+#endif /* VMA_ZCOPY_ENABLED */
 				if (ret < 0) {
 					goto err;
 				}
@@ -777,7 +871,10 @@ err:
 			struct conn_info *conn;
 
 			conn = (struct conn_info *)((uint8_t *)conns_in + i * conns_size);
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+#else
 			epoll_ctl(efd, EPOLL_CTL_DEL, conn->fd, NULL);
+#endif /* VMA_ZCOPY_ENABLED */
 			close(conn->fd);
 			conn->fd = -1;
 		}
@@ -814,9 +911,14 @@ static int _proc_receiver(void)
 	struct conn_info {
 		int id;
 		int fd;
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+		struct vma_packet_desc_t vma_packet;
+		struct vma_buff_t *vma_buf;
+		int vma_buf_offset;
+#endif /* VMA_ZCOPY_ENABLED */
 		int msg_len;
 		uint8_t msg[1];
-	} *conns = NULL;
+	} *conns;
 	struct conn_info *conn;
 	struct msg_header *msg_hdr;
 	int i;
@@ -836,6 +938,10 @@ static int _proc_receiver(void)
 	}
 
 	listen(sfd, SOMAXCONN);
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+	_vma_api->get_socket_rings_fds(sfd, &_vma_ring_fd, 1);
+	assert((-1)!=_vma_ring_fd);
+#endif /* VMA_ZCOPY_ENABLED */
 
 	conns = calloc(_config.rcount, conns_size);
 	assert(conns);
@@ -854,8 +960,12 @@ static int _proc_receiver(void)
 
 		event.data.ptr = conn;
 		event.events = EPOLLIN;
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+		event = event;
+#else
 		rc = epoll_ctl(efd, EPOLL_CTL_ADD, conn->fd, &event);
 		assert(rc == 0);
+#endif /* VMA_ZCOPY_ENABLED */
 	}
 
 	log_trace("<receiver> established %d connections with <engine>\n", _config.rcount);
@@ -870,14 +980,66 @@ static int _proc_receiver(void)
 		int n = 0;
 		int j = 0;
 
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+		if (conn) {
+			if (conn->vma_buf && (conn->vma_buf_offset < conn->vma_buf->len)) {
+				n = 1;
+			} else if (conn->vma_buf && conn->vma_buf->next) {
+				conn->vma_buf = conn->vma_buf->next;
+				conn->vma_buf_offset = 0;
+				n = 1;
+			} else if (conn->vma_buf && !conn->vma_buf->next) {
+				_vma_api->free_vma_packets(&conn->vma_packet, 1);
+				conn->vma_buf = NULL;
+				conn->vma_buf_offset = 0;
+				conn = NULL;
+				n = 0;
+			}
+		}
+		while(0 == n) {
+			struct vma_completion_t vma_comps;
+			n = _vma_api->vma_poll(_vma_ring_fd, &vma_comps, 1, 0);
+			if (n > 0) {
+				if (vma_comps.events & VMA_POLL_PACKET) {
+					int k = 0;
+					event |= EPOLLIN;
+					if (vma_comps.packet.buff_lst->len >= sizeof(struct msg_header)) {
+						msg_hdr = (struct msg_header *)vma_comps.packet.buff_lst->payload;
+						conn = (struct conn_info *)((uint8_t *)conns + msg_hdr->receiver * conns_size);
+					} else {
+						for (k = 0; k < _config.rcount; k++) {
+							conn = (struct conn_info *)((uint8_t *)conns + k * conns_size);
+							if (conn->fd == vma_comps.user_data) {
+								break;
+							}
+						}
+					}
+					conn->vma_packet.num_bufs = vma_comps.packet.num_bufs;
+					conn->vma_packet.total_len = vma_comps.packet.total_len;
+					conn->vma_packet.buff_lst = vma_comps.packet.buff_lst;
+					conn->vma_buf = conn->vma_packet.buff_lst;
+					conn->vma_buf_offset = 0;
+				} else {
+					event |= EPOLLERR;
+					log_error("vma_comps->events=%ld user_data=%ld\n", vma_comps.events, vma_comps.user_data);
+					log_error("EOF?\n");
+					goto err;
+				}
+			}
+		}
+#else
 		n = epoll_wait(efd, events, max_events, 0);
+#endif /* VMA_ZCOPY_ENABLED */
 		for (j = 0; j < n; j++) {
 			int fd = 0;
 			int ret = 0;
 
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+#else
 			event = events[j].events;
 			conn = (struct conn_info *)events[j].data.ptr;
 			assert(conn);
+#endif /* VMA_ZCOPY_ENABLED */
 
 			fd = conn->fd;
 			msg_hdr = (struct msg_header *)conn->msg;
@@ -889,9 +1051,17 @@ static int _proc_receiver(void)
 			}
 
 			if (event & EPOLLIN) {
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+				ret = _min((_config.msg_size - conn->msg_len), (conn->vma_buf->len - conn->vma_buf_offset));
+				memcpy(msg_hdr,
+						((uint8_t *)conn->vma_buf->payload) + conn->vma_buf_offset,
+						ret);
+				conn->vma_buf_offset += ret;
+#else
 				ret = _tcp_read(fd,
 						((uint8_t *)msg_hdr) + conn->msg_len,
 						_config.msg_size - conn->msg_len, _rb);
+#endif /* VMA_ZCOPY_ENABLED */
 				if (ret < 0) {
 					goto err;
 				}
@@ -923,7 +1093,10 @@ err:
 			struct conn_info *conn;
 
 			conn = (struct conn_info *)((uint8_t *)conns + i * conns_size);
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+#else
 			epoll_ctl(efd, EPOLL_CTL_DEL, conn->fd, NULL);
+#endif /* VMA_ZCOPY_ENABLED */
 			close(conn->fd);
 			conn->fd = -1;
 		}
@@ -1148,7 +1321,7 @@ static int _tcp_create_and_bind(uint16_t port)
 	}
 
 	/* listen on any port */
-	memset(&addr, 0, sizeof(addr));
+	memset(&addr, sizeof(addr), 0);
 	addr.sin_family = PF_INET;
 	addr.sin_addr.s_addr = INADDR_ANY;
 	addr.sin_port = htons(port);
@@ -1199,6 +1372,8 @@ static int _tcp_write(int fd, uint8_t *buf, int count, int block)
 	return nb;
 }
 
+#if defined(VMA_ZCOPY_ENABLED) && (VMA_ZCOPY_ENABLED == 1)
+#else
 static int _tcp_read(int fd, uint8_t *buf, int count, int block)
 {
 	int n;
@@ -1231,23 +1406,21 @@ static int _tcp_read(int fd, uint8_t *buf, int count, int block)
 
 	return nb;
 }
+#endif /* VMA_ZCOPY_ENABLED */
 
 static void _ini_stat(void)
 {
 	memset(&_stat, 0, sizeof(_stat));
 
 #if defined(TIMESTAMP_ENABLED) && (TIMESTAMP_ENABLED == 1)
-	if (_config.mode == MODE_RECEIVER) {
-		_stat.count = 0;
-		_stat.size = _config.scount * (_config.msg_count < 0 ? 10000 : _config.msg_count);
-		_stat.data = malloc(_stat.size * sizeof(*_stat.data) + _config.msg_size);
-		if (!_stat.data) {
-			log_fatal("Can not allocate memory for statistic\n");
-			exit(1);
-		}
-		memset(_stat.data, 0, _stat.size * sizeof(*_stat.data) + _config.msg_size);
-		mlock(_stat.data, _stat.size * sizeof(*_stat.data) + _config.msg_size);
+	_stat.count = 0;
+	_stat.size = _config.scount * (_config.msg_count < 0 ? 10000 : _config.msg_count);
+	_stat.data = malloc(_stat.size * sizeof(*_stat.data) + _config.msg_size);
+	if (!_stat.data) {
+		log_fatal("Can not allocate memory for statistic\n");
+		exit(1);
 	}
+	memset(_stat.data, 0, _stat.size * sizeof(*_stat.data) + _config.msg_size);
 #endif /* TIMESTAMP_ENABLED */
 }
 
@@ -1312,10 +1485,6 @@ static void _fin_stat(void)
 			log_info("Total %lu observations\n", (long unsigned)values_count);
 		}
 		free(values);
-		if (_stat.data) {
-			munlock(_stat.data, _stat.size * sizeof(*_stat.data) + _config.msg_size);
-			free(_stat.data);
-		}
 	}
 #endif /* TIMESTAMP_ENABLED */
 }
