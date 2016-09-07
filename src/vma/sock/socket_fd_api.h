@@ -219,7 +219,7 @@ public:
 
 	uint32_t m_epoll_event_flags;
 	virtual int get_rings_num() {return 0;}
-	virtual bool check_rings_fds() {return false;}
+	virtual bool check_rings() {return false;}
 	virtual int* get_rings_fds() {return NULL;}
 
 protected:
