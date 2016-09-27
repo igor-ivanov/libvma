@@ -421,6 +421,7 @@ bool sockinfo::attach_receiver(flow_tuple_with_local_if &flow_key)
 		si_logdbg("already attached %s", flow_key.to_str());
 		return false;
 	}
+fprintf(stderr, "[ii] %s:%d m_p_rx_ring=%p\n", __FUNCTION__, __LINE__, m_p_rx_ring);
 
 	// Allocate resources on specific interface (create ring)
 	net_device_resources_t* p_nd_resources = create_nd_resources((const ip_address)flow_key.get_local_if());
@@ -428,7 +429,7 @@ bool sockinfo::attach_receiver(flow_tuple_with_local_if &flow_key)
 		si_logerr("Failed to get net device resources %s", flow_key.to_str());
 		return false;
 	}
-
+fprintf(stderr, "[ii] %s:%d m_p_rx_ring=%p\n", __FUNCTION__, __LINE__, m_p_rx_ring);
 	/* just increment reference counter on attach */
 	p_nd_resources->refcnt++;
 
@@ -836,6 +837,7 @@ void sockinfo::rx_add_ring_cb(flow_tuple_with_local_if &flow_key, ring* p_ring, 
 	NOT_IN_USE(is_migration);
 
 	bool notify_epoll = false;
+fprintf(stderr, "[ii] %s:%d m_p_rx_ring=%p\n", __FUNCTION__, __LINE__, m_p_rx_ring);
 
 	// Add the rx ring to our rx ring map
 	unlock_rx_q();
@@ -885,6 +887,7 @@ void sockinfo::rx_add_ring_cb(flow_tuple_with_local_if &flow_key, ring* p_ring, 
 	} else {
 		si_logdbg("ring map size: %d", m_rx_ring_map.size());
 	}
+fprintf(stderr, "[ii] %s:%d m_p_rx_ring=%p\n", __FUNCTION__, __LINE__, m_p_rx_ring);
 
 	unlock_rx_q();
 	m_rx_ring_map_lock.unlock();
@@ -1124,11 +1127,5 @@ int sockinfo::register_callback(vma_recv_callback_t callback, void *context)
 {
 	m_rx_callback = callback;
 	m_rx_callback_context = context;
-	return 0;
-}
-
-int sockinfo::fast_nonblocking_rx(vma_packets_t *vma_pkts)
-{
-	NOT_IN_USE(vma_pkts);
 	return 0;
 }

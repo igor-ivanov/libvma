@@ -2518,7 +2518,7 @@ err_t sockinfo_tcp::accept_lwip_cb(void *arg, struct tcp_pcb *child_pcb, err_t e
 	// todo register as 3-tuple rule for the case the listener is gone?
 	new_sock->attach_as_uc_receiver(role_t (NULL), true);
 
-	if (safe_mce_sys().tcp_ctl_thread > CTL_THREAD_DISABLE) {
+	if (new_sock->m_sysvar_tcp_ctl_thread > CTL_THREAD_DISABLE) {
 		new_sock->m_vma_thr = true;
 
 		// Before handling packets from flow steering the child should process everything it got from parent

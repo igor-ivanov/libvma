@@ -769,7 +769,7 @@ void qp_mgr::mlx5_send(vma_ibv_send_wr *p_send_wqe)
 void qp_mgr::mlx5_init_sq()
 {
 	unsigned int i;
-	unsigned int comp = NUM_TX_POST_SEND_NOTIFY;
+	unsigned int comp = m_n_sysvar_tx_num_wr_to_signal;
 
 	for (i = 0; (i != m_tx_num_wr); ++i) {
 		volatile struct mlx5_wqe64 *wqe = &(*m_mlx5_sq_wqes)[i];
@@ -782,7 +782,7 @@ void qp_mgr::mlx5_init_sq()
 		/* Store the completion request in the WQE. */
 		if (--comp == 0) {
 			wqe->ctrl.data[2] = htonl(8);
-			comp = NUM_TX_POST_SEND_NOTIFY;
+			comp = m_n_sysvar_tx_num_wr_to_signal;
 		}
 		else
 			wqe->ctrl.data[2] = 0;

@@ -303,7 +303,7 @@ cq_mgr::~cq_mgr()
 	if (!m_p_ib_ctx_handler->is_removed()) {
 		cq_logfunc("destroying ibv_cq");
 		IF_VERBS_FAILURE(ibv_destroy_cq(m_p_ibv_cq)) {
-			cq_logdbg("destroy cq failed (errno=%d %m)", errno);
+			cq_logerr("destroy cq failed (errno=%d %m)", errno);
 		} ENDIF_VERBS_FAILURE;
 	}
 	
@@ -842,11 +842,9 @@ int cq_mgr::poll_and_process_helper_rx(uint64_t* p_cq_poll_sn, void* pv_fd_ready
 	// Assume locked!!!
 	cq_logfuncall("");
 
-	/* coverity[stack_use_local_overflow] */
-	vma_ibv_wc wce[MCE_MAX_CQ_POLL_BATCH];
-
 	int ret;
 	uint32_t ret_rx_processed = process_recv_queue(pv_fd_ready_array);
+
 	if (unlikely(ret_rx_processed >= m_n_sysvar_cq_poll_batch_max)) {
 		m_p_ring->m_gro_mgr.flush_all(pv_fd_ready_array);
 		return ret_rx_processed;
@@ -924,7 +922,7 @@ int cq_mgr::poll_and_process_helper_tx(uint64_t* p_cq_poll_sn)
 #if !defined(USE_HW_ACCESS)
 	/* coverity[stack_use_local_overflow] */
 	vma_ibv_wc wce[MCE_MAX_CQ_POLL_BATCH];
-	int ret = poll(wce, m_n_sysvar_cq_poll_batch_max, p_cq_poll_sn);
+	ret = poll(wce, m_n_sysvar_cq_poll_batch_max, p_cq_poll_sn);
 	if (ret > 0) {
 		m_n_wce_counter += ret;
 		if (ret < (int)m_n_sysvar_cq_poll_batch_max)
@@ -941,7 +939,7 @@ int cq_mgr::poll_and_process_helper_tx(uint64_t* p_cq_poll_sn)
 	volatile mlx5_cqe64 *cqe = mlx5_get_cqe64();
 
 	if (likely(cqe)) {
-		m_qp->m_mlx5_hw_qp->sq.tail += NUM_TX_POST_SEND_NOTIFY;
+		m_qp->m_mlx5_hw_qp->sq.tail += 64; /* TODO: NUM_TX_POST_SEND_NOTIFY -> m_n_sysvar_tx_num_wr_to_signal; */
 		uint16_t wqe_ctr = ntohs(cqe->wqe_counter);
 		int index = wqe_ctr & (m_qp->m_tx_num_wr - 1);
 		mem_buf_desc_t* buff = (mem_buf_desc_t*)(uintptr_t)m_qp->m_sq_wqe_idx_to_wrid[index];
@@ -1098,8 +1096,8 @@ int cq_mgr::drain_and_proccess(uintptr_t* p_recycle_buffers_last_wr_id /*=NULL*/
 	}
 	m_p_ring->m_gro_mgr.flush_all(NULL);
 #else /* >>> mlx5 optimization */
-//NOT_IN_USE(p_recycle_buffers_last_wr_id);
-//return 0;
+NOT_IN_USE(p_recycle_buffers_last_wr_id);
+return 0;
 
 	// CQ polling loop until max wce limit is reached for this interval or CQ is drained
 	uint32_t ret_total = 0;

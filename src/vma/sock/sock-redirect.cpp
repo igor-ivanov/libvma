@@ -478,7 +478,9 @@ int vma_dump_fd_stats(int fd, int log_level)
 		g_p_fd_collection->statistics_print(fd, log_level::from_int(log_level));
 		return 0;
 	}
+
 	return -1;
+}
 
 int vma_get_socket_rings_num(int fd)
 {

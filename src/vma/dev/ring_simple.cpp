@@ -98,9 +98,9 @@ ring_simple::ring_simple(in_addr_t local_if, uint16_t partition_sn, int count, t
 	m_b_qp_tx_first_flushed_completion_handled(false), m_missing_buf_ref_count(0),
 	m_tx_lkey(0), m_partition(partition_sn), m_gro_mgr(safe_mce_sys().gro_streams_max, MAX_GRO_BUFS), m_up(false),
 	m_p_rx_comp_event_channel(NULL), m_p_tx_comp_event_channel(NULL), m_p_l2_addr(NULL), m_p_ring_stat(NULL),
+	m_local_if(local_if), m_transport_type(transport_type),
 	m_b_sysvar_eth_mc_l2_only_rules(safe_mce_sys().eth_mc_l2_only_rules),
-	m_local_if(local_if), m_transport_type(transport_type), m_rx_buffs_rdy_for_free_head(NULL),
-	m_rx_buffs_rdy_for_free_tail(NULL) {
+	m_rx_buffs_rdy_for_free_head(NULL), m_rx_buffs_rdy_for_free_tail(NULL) {
 
 	if (count != 1)
 		ring_logpanic("Error creating simple ring with more than 1 resource");
