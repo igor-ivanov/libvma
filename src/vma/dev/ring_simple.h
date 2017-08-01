@@ -100,6 +100,19 @@ public:
 	inline uint32_t		get_qpn() const { return (m_p_l2_addr ? ((IPoIB_addr *)m_p_l2_addr)->get_qpn() : 0); }
 	virtual int		modify_ratelimit(struct vma_rate_limit_t &rate_limit);
 	virtual int		get_tx_channel_fd() const { return m_p_tx_comp_event_channel ? m_p_tx_comp_event_channel->fd : -1; };
+	inline int		get_max_sge(void) const {
+		return m_max_sge;
+	}
+	inline uint32_t	get_max_payload_sz(void) const {
+		return m_tso.max_payload_sz;
+	}
+	inline uint16_t	get_max_header_sz(void) const {
+		return m_tso.max_header_sz;
+	}
+	inline bool		is_tso(void) const {
+		return (m_tso.max_payload_sz && m_tso.max_header_sz);
+	}
+
 	struct ibv_comp_channel* get_tx_comp_event_channel() { return m_p_tx_comp_event_channel; }
 	int			get_ring_descriptors(vma_mlx_hw_device_data &data);
 	friend class cq_mgr;
@@ -175,6 +188,17 @@ private:
 	mem_buf_desc_t*		m_rx_buffs_rdy_for_free_tail;
 #endif // DEFINED_SOCKETXTREME		
 	bool			m_flow_tag_enabled;
+
+	/* Maximum number of scatter/gather elements */
+	int m_max_sge;
+
+	struct {
+		/* Maximum length of TCP payload for TSO */
+		uint32_t max_payload_sz;
+
+		/* Maximum length of header for TSO */
+		uint16_t max_header_sz;
+	} m_tso;
 };
 
 class ring_eth : public ring_simple
