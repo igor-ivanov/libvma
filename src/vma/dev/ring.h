@@ -118,15 +118,17 @@ public:
 	bool			is_mp_ring() {return m_is_mp_ring;};
 	virtual int		modify_ratelimit(struct vma_rate_limit_t &rate_limit) = 0;
 	virtual bool		is_ratelimit_supported(struct vma_rate_limit_t &rate_limit) = 0;
-        virtual uint32_t        get_max_inline_data() = 0;
-        virtual uint32_t        get_max_send_sge(void) = 0;
+        virtual uint32_t	get_max_inline_data() = 0;
+        virtual uint32_t	get_max_send_sge(void) = 0;
+        virtual uint32_t	get_max_payload_sz(void) = 0;
+        virtual uint16_t	get_max_header_sz(void) = 0;
+        virtual bool		is_tso(void) = 0;
 	virtual int		reg_mr(void *addr, size_t length, uint32_t &lkey) { NOT_IN_USE(addr); NOT_IN_USE(length); NOT_IN_USE(lkey); return -1;};
 	virtual int		dereg_mr(void *addr, size_t length) { NOT_IN_USE(addr);NOT_IN_USE(length); return -1;};
 #ifdef DEFINED_SOCKETXTREME		
 	virtual int		socketxtreme_poll(struct vma_completion_t *vma_completions, unsigned int ncompletions, int flags) = 0;
 	virtual int		socketxtreme_reclaim_single_recv_buffer(mem_buf_desc_t* rx_reuse_lst) {NOT_IN_USE(rx_reuse_lst); return -1;}
 	virtual void		socketxtreme_reclaim_recv_buffers(mem_buf_desc_t* rx_reuse_lst) {NOT_IN_USE(rx_reuse_lst); return;}
-
 	inline void set_vma_active(bool flag) {m_vma_active = flag;}
 	inline bool get_vma_active(void) {return m_vma_active;}
 

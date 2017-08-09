@@ -783,6 +783,21 @@ uint32_t ring_bond::get_max_send_sge(void)
         return m_max_send_sge;
 }
 
+uint32_t ring_bond::get_max_payload_sz(void)
+{
+        return 0;
+}
+
+uint16_t ring_bond::get_max_header_sz(void)
+{
+        return 0;
+}
+
+bool ring_bond::is_tso(void)
+{
+        return false;
+}
+
 bool ring_bond::is_ratelimit_supported(struct vma_rate_limit_t &rate_limit)
 {
 	for (uint32_t i = 0; i < m_bond_rings.size(); i++) {
