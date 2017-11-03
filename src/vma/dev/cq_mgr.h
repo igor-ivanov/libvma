@@ -184,6 +184,8 @@ public:
 	bool	reclaim_recv_buffers(descq_t *rx_reuse);
 	bool	reclaim_recv_buffers_no_lock(descq_t *rx_reuse);
 	bool	reclaim_recv_buffers(mem_buf_desc_t *rx_reuse_lst);
+	bool	reclaim_recv_buffers_no_lock(mem_buf_desc_t *rx_reuse_lst);
+	int	reclaim_recv_single_buffer(mem_buf_desc_t* rx_reuse);
 
 	//maps between qpn and vlan id to the local interface
 	void	map_vlan_and_qpn_to_local_if(int qp_num, uint16_t vlan_id, in_addr_t local_if);
@@ -195,10 +197,6 @@ public:
 
 	inline void convert_hw_time_to_system_time(uint64_t hwtime, struct timespec* systime) { m_p_ib_ctx_handler->convert_hw_time_to_system_time(hwtime, systime); }
 	virtual bool fill_cq_hw_descriptors(struct hw_cq_data &data) {NOT_IN_USE(data);return false;};
-#ifdef DEFINED_SOCKETXTREME
-	void 	mlx5_init_cq();
-#endif // DEFINED_SOCKETXTREME
-
 
 protected:
 
@@ -282,10 +280,12 @@ private:
 
 	void		handle_tcp_ctl_packets(uint32_t rx_processed, void* pv_fd_ready_array);
 
-#ifdef DEFINED_SOCKETXTREME
-	int 		socketxtreme_reclaim_single_recv_buffer_helper(mem_buf_desc_t* buff);
-	void		socketxtreme_reclaim_recv_buffer_helper(mem_buf_desc_t* buff);
-#endif // DEFINED_SOCKETXTREME
+	/* This fields are needed to track internal memory buffers
+	 * represented as struct vma_buff_t
+	 * from user application by special VMA extended API
+	 */
+	mem_buf_desc_t*		m_rx_buffs_rdy_for_free_head;
+	mem_buf_desc_t*		m_rx_buffs_rdy_for_free_tail;
 
 	// requests safe_mce_sys().qp_compensation_level buffers from global pool
 	bool 		request_more_buffers() __attribute__((noinline));

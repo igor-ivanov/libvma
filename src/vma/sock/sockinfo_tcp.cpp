@@ -78,30 +78,6 @@
 tcp_seg_pool *g_tcp_seg_pool = NULL;
 tcp_timers_collection* g_tcp_timers_collection = NULL;
 
-#ifndef DEFINED_SOCKETXTREME // if not defined
-const char * const tcp_sock_state_str[] = {
-  "NA",
-  "TCP_SOCK_INITED",
-  "TCP_SOCK_BOUND",
-  "TCP_SOCK_LISTEN_READY",
-  "TCP_SOCK_ACCEPT_READY",
-  "TCP_SOCK_CONNECTED_RD",
-  "TCP_SOCK_CONNECTED_WR",
-  "TCP_SOCK_CONNECTED_RDWR",
-  "TCP_SOCK_ASYNC_CONNECT",
-  "TCP_SOCK_ACCEPT_SHUT",
-};
-
-const char * const tcp_conn_state_str[] = {
-  "TCP_CONN_INIT",
-  "TCP_CONN_CONNECTING",
-  "TCP_CONN_CONNECTED",
-  "TCP_CONN_FAILED",
-  "TCP_CONN_TIMEOUT",
-  "TCP_CONN_ERROR",
-  "TCP_CONN_RESETED",
-};
-#endif // DEFINED_SOCKETXTREME
 
 /**/
 /** inlining functions can only help if they are implemented before their usage **/
@@ -2765,10 +2741,6 @@ err_t sockinfo_tcp::accept_lwip_cb(void *arg, struct tcp_pcb *child_pcb, err_t e
 	if (new_sock->m_conn_state == TCP_CONN_INIT) { //in case m_conn_state is not in one of the error states
 		new_sock->m_conn_state = TCP_CONN_CONNECTED;
 	}
-
-#ifndef DEFINED_SOCKETXTREME // if not defined
-	new_sock->m_parent = NULL;
-#endif // DEFINED_SOCKETXTREME
 	
 	/* if attach failed, we should continue getting traffic through the listen socket */
 	// todo register as 3-tuple rule for the case the listener is gone?
@@ -2824,10 +2796,10 @@ err_t sockinfo_tcp::accept_lwip_cb(void *arg, struct tcp_pcb *child_pcb, err_t e
 
 	conn->unlock_tcp_con();
 
-	new_sock->lock_tcp_con();
-#ifdef DEFINED_SOCKETXTREME
+	/* Do this after auto_accept_connection() call */
 	new_sock->m_parent = NULL;
-#endif // DEFINED_SOCKETXTREME	
+
+	new_sock->lock_tcp_con();
 
 	return ERR_OK;
 }
@@ -3480,14 +3452,12 @@ int sockinfo_tcp::setsockopt(int __level, int __optname,
 	bool supported = true;
 	bool allow_privileged_sock_opt = false;
 
-#ifdef DEFINED_SOCKETXTREME
 	/* Process VMA specific options only at the moment
 	 * VMA option does not require additional processing after return
 	 */
 	if (0 == sockinfo::setsockopt(__level, __optname, __optval, __optlen)) {
 		return 0;
 	}
-#endif // DEFINED_SOCKETXTREME
 
 	if (__level == IPPROTO_IP) {
 		switch(__optname) {
@@ -3608,7 +3578,6 @@ int sockinfo_tcp::setsockopt(int __level, int __optname,
 			} else {
 				m_so_bindtodevice_ip = sockaddr.sin_addr.s_addr;
 
-#ifdef DEFINED_SOCKETXTREME
 				if (!is_connected()) {
 					/* Current implementation allows to create separate rings for tx and rx.
 					 * tx ring is created basing on destination ip during connect() call,
@@ -3619,7 +3588,7 @@ int sockinfo_tcp::setsockopt(int __level, int __optname,
 					 * (!m_bound.is_anyaddr() && !m_bound.is_local_loopback())
 					 * and can not detect offload/non-offload socket
 					 * Note:
-					 * This inconsistence should be resolved.
+					 * This inconsistency should be resolved.
 					 */
 					ip_address local_ip(m_so_bindtodevice_ip);
 
@@ -3632,7 +3601,6 @@ int sockinfo_tcp::setsockopt(int __level, int __optname,
 					}
 					unlock_tcp_con();
 				}
-#endif // DEFINED_SOCKETXTREME				
 			}
 			// handle TX side
 			if (m_p_connected_dst_entry) {
@@ -3704,14 +3672,13 @@ int sockinfo_tcp::getsockopt_offload(int __level, int __optname, void *__optval,
 		return ret;
 	}
 	
-#ifdef DEFINED_SOCKETXTREME
 	/* Process VMA specific options only at the moment
 	 * VMA option does not require additional processing after return
 	 */
 	if (0 == sockinfo::getsockopt(__level, __optname, __optval, __optlen)) {
 		return 0;
 	}
-#endif // DEFINED_SOCKETXTREME	
+
 	switch (__level) {
 	case IPPROTO_TCP:
 		switch(__optname) {
@@ -4219,6 +4186,28 @@ int sockinfo_tcp::zero_copy_rx(iovec *p_iov, mem_buf_desc_t *pdesc, int *p_flags
 #ifndef DEFINED_SOCKETXTREME // if not defined
 void sockinfo_tcp::statistics_print(vlog_levels_t log_level /* = VLOG_DEBUG */)
 {
+	const char * const tcp_sock_state_str[] = {
+	  "NA",
+	  "TCP_SOCK_INITED",
+	  "TCP_SOCK_BOUND",
+	  "TCP_SOCK_LISTEN_READY",
+	  "TCP_SOCK_ACCEPT_READY",
+	  "TCP_SOCK_CONNECTED_RD",
+	  "TCP_SOCK_CONNECTED_WR",
+	  "TCP_SOCK_CONNECTED_RDWR",
+	  "TCP_SOCK_ASYNC_CONNECT",
+	  "TCP_SOCK_ACCEPT_SHUT",
+	};
+
+	const char * const tcp_conn_state_str[] = {
+	  "TCP_CONN_INIT",
+	  "TCP_CONN_CONNECTING",
+	  "TCP_CONN_CONNECTED",
+	  "TCP_CONN_FAILED",
+	  "TCP_CONN_TIMEOUT",
+	  "TCP_CONN_ERROR",
+	  "TCP_CONN_RESETED",
+	};
 	struct tcp_pcb pcb;
 	tcp_sock_state_e sock_state;
 	tcp_conn_state_e conn_state;
@@ -4396,13 +4385,11 @@ int sockinfo_tcp::free_packets(struct vma_packet_t *pkts, size_t count)
 	return ret;
 }
 
-#ifdef DEFINED_SOCKETXTREME
 int sockinfo_tcp::free_buffs(uint16_t len)
 {
 	tcp_recved(&m_pcb, len);
 	return 0;
 }
-#endif // DEFINED_SOCKETXTREME
 
 struct pbuf * sockinfo_tcp::tcp_tx_pbuf_alloc(void* p_conn)
 {

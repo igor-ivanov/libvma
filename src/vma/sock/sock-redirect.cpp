@@ -427,7 +427,7 @@ int vma_socketxtreme_free_vma_packets(struct vma_packet_desc_t *packets, int num
 					p_socket_object->free_buffs(packets[i].total_len);
 				}
 				if (rng) {
-					rng->socketxtreme_reclaim_recv_buffers(desc);
+					rng->reclaim_recv_buffers(desc);
 				} else {
 					goto err;
 				}
@@ -485,7 +485,7 @@ int vma_socketxtreme_free_vma_buff(vma_buff_t *buff)
 	if (likely(buff)) {
 		desc = (mem_buf_desc_t*)buff;
 		ring* rng = (ring*)desc->p_desc_owner;
-		ret_val = rng->socketxtreme_reclaim_single_recv_buffer(desc);
+		ret_val = rng->reclaim_recv_single_buffer(desc);
 	}
 	else {
 		errno = EINVAL;
