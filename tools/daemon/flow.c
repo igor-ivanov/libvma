@@ -38,10 +38,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <strings.h>
 #include <sys/time.h>
 
 
 #include "hash.h"
+#include "bitmap.h"
 #include "daemon.h"
 
 
@@ -74,19 +76,28 @@ void close_flow(void);
 int add_flow(pid_t pid, struct store_flow *value);
 int del_flow(pid_t pid, struct store_flow *value);
 
-static int get_ht(struct store_flow *value);
-static int get_prio(struct store_flow *value);
+static inline int get_htid(struct store_flow *value);
+static inline void free_htid(int ht);
+static inline int get_prio(struct store_flow *value);
 
+static 	bitmap_t *htid_bt;      /**< bitmap of used hash tables */
 
 int open_flow(void)
 {
 	INIT_LIST_HEAD(&daemon_cfg.if_list);
+
+	/* tables from 0x800 are reserved by kernel */
+	bitmap_create(&htid_bt, (0x800 - 1));
+
+	/* table id = 0 is not used */
+	bitmap_set(htid_bt, 0);
 
 	return 0;
 }
 
 void close_flow(void)
 {
+	bitmap_destroy(htid_bt);
 }
 
 int add_flow(pid_t pid, struct store_flow *value)
@@ -154,8 +165,8 @@ int add_flow(pid_t pid, struct store_flow *value)
 		out_buf = sys_exec("tc qdisc add dev %s handle ffff: ingress > /dev/null 2>&1 || echo $?",
 							if_name);
 		if (NULL == out_buf || (out_buf[0] != '\0' && out_buf[0] != '0')) {
-			log_error("[%d] failed tc qdisc add dev %s errno %d (%s)\n",
-					pid, if_name, errno, strerror(errno));
+			log_error("[%d] failed tc qdisc add dev %s output: %s\n",
+					pid, if_name, (out_buf ? out_buf : "n/a"));
 			free(cur_element);
 			rc = -EFAULT;
 			goto err;
@@ -188,12 +199,12 @@ int add_flow(pid_t pid, struct store_flow *value)
 			goto err;
 		}
 
-		ht = get_ht(value);
+		ht = get_htid(value);
 		out_buf = sys_exec("tc filter add dev %s parent ffff: prio %d handle %x: protocol ip u32 divisor 256 > /dev/null 2>&1 || echo $?",
 							if_name, get_prio(value), ht);
 		if (NULL == out_buf || (out_buf[0] != '\0' && out_buf[0] != '0')) {
-			log_error("[%d] failed add ht dev %s prio %d handle %x errno %d (%s)\n",
-					pid, if_name, get_prio(value), ht, errno, strerror(errno));
+			log_error("[%d] failed add ht dev %s prio %d handle %x output: %s\n",
+					pid, if_name, get_prio(value), ht, (out_buf ? out_buf : "n/a"));
 			free(cur_element);
 			rc = -EFAULT;
 			goto err;
@@ -201,8 +212,8 @@ int add_flow(pid_t pid, struct store_flow *value)
 		out_buf = sys_exec("tc filter add dev %s protocol ip parent ffff: prio %d handle ::%x u32 ht 800:: match ip dst %s/32 hashkey mask 0x000000ff at 20 link %x: > /dev/null 2>&1 || echo $?",
 							if_name, get_prio(value), ht, sys_ip2str(ip), ht);
 		if (NULL == out_buf || (out_buf[0] != '\0' && out_buf[0] != '0')) {
-			log_error("[%d] failed link ht dev %s prio %d handle %x:: dst %s errno %d (%s)\n",
-					pid, if_name, get_prio(value), ht, sys_ip2str(ip), errno, strerror(errno));
+			log_error("[%d] failed link ht dev %s prio %d handle %x:: dst %s output: %s\n",
+					pid, if_name, get_prio(value), ht, sys_ip2str(ip), (out_buf ? out_buf : "n/a"));
 			free(cur_element);
 			rc = -EFAULT;
 			goto err;
@@ -261,8 +272,8 @@ int add_flow(pid_t pid, struct store_flow *value)
 			break;
 		}
 		if (NULL == out_buf || (out_buf[0] != '\0' && out_buf[0] != '0')) {
-			log_error("[%d] failed add filter dev %s prio %d handle %x:%x:%x errno %d (%s)\n",
-					pid, if_name, get_prio(value), ht, bkt, id, errno, strerror(errno));
+			log_error("[%d] failed add filter dev %s prio %d handle %x:%x:%x output: %s\n",
+					pid, if_name, get_prio(value), ht, bkt, id, (out_buf ? out_buf : "n/a"));
 			free(cur_element);
 			rc = -EFAULT;
 			goto err;
@@ -279,11 +290,12 @@ int add_flow(pid_t pid, struct store_flow *value)
 	log_debug("[%d] add flow (port): 0x%p value: %d ref: %d\n",
 			pid, cur_element, cur_element->value[0], cur_element->ref);
 
-	value->handle = HANDLE_SET(ht, bkt, id);
-	log_debug("[%d] add flow filter: %x:%x:%x\n",
-			pid, ht, bkt, id);
-
 err:
+
+	value->handle = HANDLE_SET(ht, bkt, id);
+	log_debug("[%d] add flow filter: %x:%x:%x rc=%d\n",
+			pid, ht, bkt, id, rc);
+
 	return rc;
 }
 
@@ -374,8 +386,8 @@ int del_flow(pid_t pid, struct store_flow *value)
 					out_buf = sys_exec("tc filter del dev %s parent ffff: protocol ip prio %d handle %x:%x:%x u32 > /dev/null 2>&1 || echo $?",
 										if_name, get_prio(value), ht, bkt, id);
 					if (NULL == out_buf || (out_buf[0] != '\0' && out_buf[0] != '0')) {
-						log_error("[%d] tc filter del dev %s prio %d handle %x:%x:%x errno %d (%s)\n",
-								pid, if_name, get_prio(value), ht, bkt, id, errno, strerror(errno));
+						log_warn("[%d] remove filter dev %s prio %d handle %x:%x:%x output: %s\n",
+								pid, if_name, get_prio(value), ht, bkt, id, (out_buf ? out_buf : "n/a"));
 						rc = -EFAULT;
 					}
 
@@ -395,8 +407,8 @@ int del_flow(pid_t pid, struct store_flow *value)
 				out_buf = sys_exec("tc filter del dev %s parent ffff: protocol ip prio %d handle 800::%x u32 > /dev/null 2>&1 || echo $?",
 									if_name, get_prio(value), ht);
 				if (NULL == out_buf || (out_buf[0] != '\0' && out_buf[0] != '0')) {
-					log_error("[%d] tc filter del dev %s prio %d handle 800::%x errno %d (%s)\n",
-							pid, if_name, get_prio(value), ht, errno, strerror(errno));
+					log_error("[%d] unlink table dev %s prio %d handle 800::%x output: %s\n",
+							pid, if_name, get_prio(value), ht, (out_buf ? out_buf : "n/a"));
 					rc = -EFAULT;
 				}
 
@@ -404,12 +416,13 @@ int del_flow(pid_t pid, struct store_flow *value)
 									if_name, get_prio(value), ht);
 #if 0 /* Device busy error is returned (There is no issue if insert sleep(1) before execution */
 				if (NULL == out_buf || (out_buf[0] != '\0' && out_buf[0] != '0')) {
-					log_error("[%d] tc filter del dev %s prio %d handle %x errno %d (%s)\n",
-							pid, if_name, get_prio(value), ht, errno, strerror(errno));
+					log_error("[%d] remove table dev %s prio %d handle %x:: output: %s\n",
+							pid, if_name, get_prio(value), ht, (out_buf ? out_buf : "n/a"));
 					rc = -EFAULT;
 				}
 #endif
 
+				free_htid(ht);
 				list_del_init(cur_entry);
 				free(cur_element);
 			}
@@ -425,8 +438,8 @@ int del_flow(pid_t pid, struct store_flow *value)
 
 			out_buf = sys_exec("tc qdisc del dev %s handle ffff: ingress > /dev/null 2>&1 || echo $?", if_name);
 			if (NULL == out_buf || (out_buf[0] != '\0' && out_buf[0] != '0')) {
-				log_error("[%d] failed tc qdisc del dev %s errno %d (%s)\n",
-						pid, if_name, errno, strerror(errno));
+				log_warn("[%d] failed tc qdisc del dev %s output: %s\n",
+						pid, if_name, (out_buf ? out_buf : "n/a"));
 				rc = -EFAULT;
 			}
 
@@ -435,21 +448,32 @@ int del_flow(pid_t pid, struct store_flow *value)
 		}
 	}
 
-	log_debug("[%d] del flow filter: %x:%x:%x\n",
-			pid, ht, bkt, id);
-
 err:
+
+	log_debug("[%d] del flow filter: %x:%x:%x rc=%d\n",
+			pid, ht, bkt, id, rc);
+
 	return rc;
 }
 
 
-static int get_ht(struct store_flow *value)
+static inline int get_htid(struct store_flow *value)
 {
-	static int ht_id = 0;
-	return (HANDLE_HT(value->handle) ? (int)HANDLE_HT(value->handle) : (++ht_id) % 0x7FF);
+	int htid = HANDLE_HT(value->handle);
+
+	if (!htid) {
+		htid = bitmap_find_first_zero(htid_bt);
+		bitmap_set(htid_bt, htid);
+	}
+	return htid;
 }
 
-static int get_prio(struct store_flow *value)
+static inline void free_htid(int ht)
+{
+	bitmap_clear(htid_bt, ht);
+}
+
+static inline int get_prio(struct store_flow *value)
 {
 	return value->type;
 }
