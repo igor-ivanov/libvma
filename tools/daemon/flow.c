@@ -61,6 +61,18 @@
 #define HANDLE_ID(value)          ((((uint32_t)(value)) & 0x00000FFF) >> 0)   /* 12bits by offset 0 */
 
 /**
+ * @struct flow_ctx
+ * @brief It is an object described extra details for flow element
+ */
+struct flow_ctx {
+	bitmap_t *ht;   /**< bitmap of used hash tables */
+	struct {
+		int prio;
+		int id;
+	} ht_prio[4];   /**< internal hash tables related priority (size should be set as number of possible priorities) */
+};
+
+/**
  * @struct flow_element
  * @brief It is an object described tc element
  */
@@ -69,6 +81,10 @@ struct flow_element {
 	struct list_head list; /**< head of children list */
 	int ref;               /**< reference counter */
 	uint32_t value[2];     /**< data */
+	union {
+		struct flow_ctx *ctx;  /**< data related if */
+		uint32_t ht_id;        /**< data related ip (16 bytes for internal ht id 16 bytes ht id) */
+	};
 };
 
 int open_flow(void);
@@ -76,28 +92,20 @@ void close_flow(void);
 int add_flow(pid_t pid, struct store_flow *value);
 int del_flow(pid_t pid, struct store_flow *value);
 
-static inline int get_htid(struct store_flow *value);
-static inline void free_htid(int ht);
+static inline void get_htid(struct flow_ctx *ctx, int prio, int *ht_krn, int *ht_id);
+static inline void free_htid(struct flow_ctx *ctx, int ht_id);
 static inline int get_prio(struct store_flow *value);
 
-static 	bitmap_t *htid_bt;      /**< bitmap of used hash tables */
 
 int open_flow(void)
 {
 	INIT_LIST_HEAD(&daemon_cfg.if_list);
-
-	/* tables from 0x800 are reserved by kernel */
-	bitmap_create(&htid_bt, (0x800 - 1));
-
-	/* table id = 0 is not used */
-	bitmap_set(htid_bt, 0);
 
 	return 0;
 }
 
 void close_flow(void)
 {
-	bitmap_destroy(htid_bt);
 }
 
 int add_flow(pid_t pid, struct store_flow *value)
@@ -113,7 +121,9 @@ int add_flow(pid_t pid, struct store_flow *value)
 	uint32_t port = 0;
 	int ht = HANDLE_HT(value->handle);
 	int bkt = HANDLE_BKT(value->handle);
-	int id = HANDLE_ID(value->handle);;
+	int id = HANDLE_ID(value->handle);
+	int ht_internal = 0x800;
+	struct flow_ctx *ctx = NULL;
 	char str_tmp[20];
 
 	switch (value->type) {
@@ -162,8 +172,10 @@ int add_flow(pid_t pid, struct store_flow *value)
 			goto err;
 		}
 
-		out_buf = sys_exec("tc qdisc add dev %s handle ffff: ingress > /dev/null 2>&1 || echo $?",
-							if_name);
+		/* Cleanup from possible failure during last daemon session */
+		out_buf = sys_exec("tc qdisc del dev %s handle ffff: ingress > /dev/null 2>&1 || echo $?", if_name);
+
+		out_buf = sys_exec("tc qdisc add dev %s handle ffff: ingress > /dev/null 2>&1 || echo $?", if_name);
 		if (NULL == out_buf || (out_buf[0] != '\0' && out_buf[0] != '0')) {
 			log_error("[%d] failed tc qdisc add dev %s output: %s\n",
 					pid, if_name, (out_buf ? out_buf : "n/a"));
@@ -175,10 +187,20 @@ int add_flow(pid_t pid, struct store_flow *value)
 		INIT_LIST_HEAD(&cur_element->list);
 		cur_element->ref = 0;
 		cur_element->value[0] = value->if_id;
+		cur_element->ctx = (void *)calloc(1, sizeof(*cur_element->ctx));
+		if (NULL == cur_element->ctx) {
+			rc = -ENOMEM;
+			goto err;
+		}
+		/* tables from 0x800 are reserved by kernel */
+		bitmap_create(&cur_element->ctx->ht, (0x800 - 1));
+		/* table id = 0 is not used */
+		bitmap_set(cur_element->ctx->ht, 0);
 		list_add_tail(&cur_element->item, cur_head);
 	}
 	assert(cur_element);
 	cur_element->ref++;
+	ctx = cur_element->ctx;
 
 	log_debug("[%d] add flow (if): 0x%p value: %d ref: %d\n",
 			pid, cur_element, cur_element->value[0], cur_element->ref);
@@ -189,6 +211,8 @@ int add_flow(pid_t pid, struct store_flow *value)
 		cur_element = container_of(cur_entry, struct flow_element, item);
 		if (cur_element->value[0] == (uint32_t)value->type &&
 			cur_element->value[1] == ip) {
+			ht = cur_element->ht_id & 0x0000FFFF;
+			ht_internal = (cur_element->ht_id >> 16) & 0x0000FFFF;
 			break;
 		}
 	}
@@ -199,7 +223,7 @@ int add_flow(pid_t pid, struct store_flow *value)
 			goto err;
 		}
 
-		ht = get_htid(value);
+		get_htid(ctx, get_prio(value), &ht_internal, &ht);
 		out_buf = sys_exec("tc filter add dev %s parent ffff: prio %d handle %x: protocol ip u32 divisor 256 > /dev/null 2>&1 || echo $?",
 							if_name, get_prio(value), ht);
 		if (NULL == out_buf || (out_buf[0] != '\0' && out_buf[0] != '0')) {
@@ -209,8 +233,8 @@ int add_flow(pid_t pid, struct store_flow *value)
 			rc = -EFAULT;
 			goto err;
 		}
-		out_buf = sys_exec("tc filter add dev %s protocol ip parent ffff: prio %d handle ::%x u32 ht 800:: match ip dst %s/32 hashkey mask 0x000000ff at 20 link %x: > /dev/null 2>&1 || echo $?",
-							if_name, get_prio(value), ht, sys_ip2str(ip), ht);
+		out_buf = sys_exec("tc filter add dev %s protocol ip parent ffff: prio %d handle ::%x u32 ht %x:: match ip dst %s/32 hashkey mask 0x000000ff at 20 link %x: > /dev/null 2>&1 || echo $?",
+							if_name, get_prio(value), ht, ht_internal, sys_ip2str(ip), ht);
 		if (NULL == out_buf || (out_buf[0] != '\0' && out_buf[0] != '0')) {
 			log_error("[%d] failed link ht dev %s prio %d handle %x:: dst %s output: %s\n",
 					pid, if_name, get_prio(value), ht, sys_ip2str(ip), (out_buf ? out_buf : "n/a"));
@@ -223,6 +247,7 @@ int add_flow(pid_t pid, struct store_flow *value)
 		cur_element->ref = 0;
 		cur_element->value[0] = value->type;
 		cur_element->value[1] = ip;
+		cur_element->ht_id = ((ht_internal << 16) & 0xFFFF0000) | (ht & 0x0000FFFF);
 		list_add_tail(&cur_element->item, cur_head);
 	}
 	assert(cur_element);
@@ -313,7 +338,9 @@ int del_flow(pid_t pid, struct store_flow *value)
 	uint32_t port = 0;
 	int ht = HANDLE_HT(value->handle);
 	int bkt = HANDLE_BKT(value->handle);
-	int id = HANDLE_ID(value->handle);;
+	int id = HANDLE_ID(value->handle);
+	int ht_internal = 0x800;
+	struct flow_ctx *ctx = NULL;
 
 	switch (value->type) {
 	case VMA_MSG_FLOW_TCP_3T:
@@ -349,6 +376,7 @@ int del_flow(pid_t pid, struct store_flow *value)
 	}
 	if (cur_entry != cur_head) {
 		assert(cur_element);
+		ctx = cur_element->ctx;
 		save_element[0] = cur_element;
 		save_entry[0] = cur_entry;
 
@@ -358,6 +386,8 @@ int del_flow(pid_t pid, struct store_flow *value)
 			cur_element = container_of(cur_entry, struct flow_element, item);
 			if (cur_element->value[0] == (uint32_t)value->type &&
 				cur_element->value[1] == ip) {
+				ht = cur_element->ht_id & 0x0000FFFF;
+				ht_internal = (cur_element->ht_id >> 16) & 0x0000FFFF;
 				break;
 			}
 		}
@@ -404,17 +434,17 @@ int del_flow(pid_t pid, struct store_flow *value)
 					pid, cur_element, cur_element->value[0], cur_element->value[1], cur_element->ref);
 			if (list_empty(&cur_element->list) && (cur_element->ref <=0 )) {
 
-				out_buf = sys_exec("tc filter del dev %s parent ffff: protocol ip prio %d handle 800::%x u32 > /dev/null 2>&1 || echo $?",
-									if_name, get_prio(value), ht);
+				out_buf = sys_exec("tc filter del dev %s parent ffff: protocol ip prio %d handle %x::%x u32 > /dev/null 2>&1 || echo $?",
+									if_name, get_prio(value), ht_internal, ht);
 				if (NULL == out_buf || (out_buf[0] != '\0' && out_buf[0] != '0')) {
-					log_error("[%d] unlink table dev %s prio %d handle 800::%x output: %s\n",
+					log_error("[%d] unlink table dev %s prio %d handle ::%x output: %s\n",
 							pid, if_name, get_prio(value), ht, (out_buf ? out_buf : "n/a"));
 					rc = -EFAULT;
 				}
 
 				out_buf = sys_exec("tc filter del dev %s parent ffff: protocol ip prio %d handle %x: u32 > /dev/null 2>&1 || echo $?",
 									if_name, get_prio(value), ht);
-#if 0 /* Device busy error is returned (There is no issue if insert sleep(1) before execution */
+#if 1 /* Device busy error is returned (There is no issue if insert sleep(1) before execution */
 				if (NULL == out_buf || (out_buf[0] != '\0' && out_buf[0] != '0')) {
 					log_error("[%d] remove table dev %s prio %d handle %x:: output: %s\n",
 							pid, if_name, get_prio(value), ht, (out_buf ? out_buf : "n/a"));
@@ -422,7 +452,7 @@ int del_flow(pid_t pid, struct store_flow *value)
 				}
 #endif
 
-				free_htid(ht);
+				free_htid(ctx, ht);
 				list_del_init(cur_entry);
 				free(cur_element);
 			}
@@ -443,6 +473,8 @@ int del_flow(pid_t pid, struct store_flow *value)
 				rc = -EFAULT;
 			}
 
+			bitmap_destroy(cur_element->ctx->ht);
+			free(cur_element->ctx);
 			list_del_init(cur_entry);
 			free(cur_element);
 		}
@@ -457,20 +489,43 @@ err:
 }
 
 
-static inline int get_htid(struct store_flow *value)
+static inline void get_htid(struct flow_ctx *ctx, int prio, int *ht_krn, int *ht_id)
 {
-	int htid = HANDLE_HT(value->handle);
+	if (ht_krn) {
+		int i;
+		int free_index = -1;
+		int free_id = -1;
 
-	if (!htid) {
-		htid = bitmap_find_first_zero(htid_bt);
-		bitmap_set(htid_bt, htid);
+		*ht_krn = 0;
+		for (i = 0; i < (int)(sizeof(ctx->ht_prio) / sizeof(ctx->ht_prio[0])); i++) {
+			if (ctx->ht_prio[i].prio == prio) {
+				*ht_krn = (0x800 + ctx->ht_prio[i].id);
+				break;
+			}
+			if (ctx->ht_prio[i].prio == 0) {
+				free_index = i;
+			} else {
+				free_id = (free_id < ctx->ht_prio[i].id ? ctx->ht_prio[i].id : free_id);
+			}
+		}
+
+		if (0 == *ht_krn) {
+			ctx->ht_prio[free_index].prio = prio;
+			ctx->ht_prio[free_index].id = free_id + 1;
+
+			*ht_krn = (0x800 + ctx->ht_prio[free_index].id);
+		}
 	}
-	return htid;
+
+	if (ht_id) {
+		*ht_id = bitmap_find_first_zero(ctx->ht);
+		bitmap_set(ctx->ht, *ht_id);
+	}
 }
 
-static inline void free_htid(int ht)
+static inline void free_htid(struct flow_ctx *ctx, int ht_id)
 {
-	bitmap_clear(htid_bt, ht);
+	bitmap_clear(ctx->ht, ht_id);
 }
 
 static inline int get_prio(struct store_flow *value)
