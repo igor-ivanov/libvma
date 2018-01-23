@@ -823,15 +823,16 @@ int ring_bond_eth_netvsc::poll_and_process_element_tap_rx(void* pv_fd_ready_arra
 	if(m_tap_data_available) {
 		if (m_rx_pool.size() || request_more_rx_buffers()) {
 			mem_buf_desc_t *buff = m_rx_pool.get_and_pop_front();
-			m_ring_stat.tap.n_rx_buffers--;
-
-			bytes = orig_os_api.read(m_tap_fd, buff->p_buffer, buff->sz_buffer);
-			if (bytes > 0) {
-				buff->sz_data = bytes;
-				m_bond_rings[0]->rx_process_buffer(buff, pv_fd_ready_array);
-				// TODO handle failure or bytes == 0
+			buff->sz_data = orig_os_api.read(m_tap_fd, buff->p_buffer, buff->sz_buffer);
+			if (buff->sz_data > 0 && m_bond_rings[0]->rx_process_buffer(buff, pv_fd_ready_array)) {
+				// Data was read and processed successfully
+				bytes = buff->sz_data;
 				m_ring_stat.n_rx_byte_count += bytes;
 				m_ring_stat.n_rx_pkt_count++;
+				m_ring_stat.tap.n_rx_buffers--;
+			} else {
+				// Unable to read data, return buffer to pool
+				m_rx_pool.push_front(buff);
 			}
 
 			m_tap_data_available = false;
