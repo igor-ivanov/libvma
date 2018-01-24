@@ -275,7 +275,7 @@ int add_flow(pid_t pid, struct store_flow *value)
 		}
 
 		bkt = ntohs(port) & 0xFF;
-		id = ntohs(port) / 0xFF;
+		id = (ntohs(port) / 0xFF) & 0xFF;
 		switch (value->type) {
 		case VMA_MSG_FLOW_TCP_3T:
 			out_buf = sys_exec("tc filter add dev %s parent ffff: protocol ip "
@@ -286,6 +286,7 @@ int add_flow(pid_t pid, struct store_flow *value)
 								sys_ip2str(value->flow.t3.dst_ip), ntohs(value->flow.t3.dst_port), tap_name);
 			break;
 		case VMA_MSG_FLOW_TCP_5T:
+			id = id | (value->flow.t5.src_port & 0x0F00);
 			strcpy(str_tmp, sys_ip2str(value->flow.t5.src_ip));
 			out_buf = sys_exec("tc filter add dev %s parent ffff: protocol ip "
 								"prio %d handle ::%x u32 ht %x:%x: match ip protocol 6 0xff "
