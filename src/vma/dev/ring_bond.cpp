@@ -875,9 +875,6 @@ bool ring_bond_eth_netvsc::attach_flow(flow_tuple& flow_spec_5t, pkt_rcvr_sink* 
 		struct vma_msg_flow data;
 
 		memset(&data, 0, sizeof(data));
-		data.hdr.code = VMA_MSG_FLOW;
-		data.hdr.ver = VMA_AGENT_VER;
-		data.hdr.pid = getpid();
 		data.action = VMA_MSG_FLOW_ADD;
 		data.if_id = m_netvsc_idx;
 		data.tap_id = m_tap_idx;
@@ -917,9 +914,6 @@ bool ring_bond_eth_netvsc::detach_flow(flow_tuple& flow_spec_5t, pkt_rcvr_sink* 
 		struct vma_msg_flow data;
 
 		memset(&data, 0, sizeof(data));
-		data.hdr.code = VMA_MSG_FLOW;
-		data.hdr.ver = VMA_AGENT_VER;
-		data.hdr.pid = getpid();
 		data.action = VMA_MSG_FLOW_DEL;
 		data.if_id = m_netvsc_idx;
 		data.tap_id = m_tap_idx;
