@@ -339,8 +339,8 @@ static int clean_process(pid_t pid)
 					log_debug("[%d] #%d found handle: 0x%08X type: %d if_id: %d tap_id: %d\n",
 							pid_value->pid, j,
 							flow_value->handle, flow_value->type, flow_value->if_id, flow_value->tap_id);
-					rc = del_flow(pid_value->pid, flow_value);
 					list_del_init(&flow_value->item);
+					del_flow(pid_value->pid, flow_value);
 					free(flow_value);
 				}
 

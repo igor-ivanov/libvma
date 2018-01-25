@@ -276,8 +276,8 @@ static int proc_msg_exit(struct vma_hdr *msg_hdr, size_t size)
 		struct store_flow *flow_value = NULL;
 		while (!list_empty(&pid_value->flow_list)) {
 			flow_value = list_first_entry(&pid_value->flow_list, struct store_flow, item);
-			del_flow(pid_value->pid, flow_value);
 			list_del_init(&flow_value->item);
+			del_flow(pid_value->pid, flow_value);
 			free(flow_value);
 		}
 
@@ -363,9 +363,10 @@ static int proc_msg_flow(struct vma_hdr *msg_hdr, size_t size, struct sockaddr_u
 	int rc = 0;
 	struct vma_msg_flow *data;
 	struct store_pid *pid_value;
-	struct store_flow *value;
+	struct store_flow *value = NULL;
 	struct store_flow *cur_flow = NULL;
 	struct list_head *cur_entry = NULL;
+	int value_new = 0;
 
 	assert(msg_hdr);
 	assert(msg_hdr->code == VMA_MSG_FLOW);
@@ -410,7 +411,6 @@ static int proc_msg_flow(struct vma_hdr *msg_hdr, size_t size, struct sockaddr_u
 	default:
 		log_error("Received unknown message errno %d (%s)\n", errno,
 				strerror(errno));
-		free(value);
 		rc = -EPROTO;
 		goto err;
 	}
@@ -428,9 +428,9 @@ static int proc_msg_flow(struct vma_hdr *msg_hdr, size_t size, struct sockaddr_u
 		if (cur_entry == &pid_value->flow_list) {
 			rc = add_flow(pid_value->pid, value);
 			if (rc < 0) {
-				free(value);
 				goto err;
 			}
+			value_new = 1; /* mark value as new to avoid releasing */
 			list_add_tail(&value->item, &pid_value->flow_list);
 
 			log_debug("[%d] add flow handle: 0x%08X type: %d if_id: %d tap_id: %d\n",
@@ -447,13 +447,12 @@ static int proc_msg_flow(struct vma_hdr *msg_hdr, size_t size, struct sockaddr_u
 				!memcmp(&value->flow, &cur_flow->flow, sizeof(cur_flow->flow))) {
 				log_debug("[%d] del flow handle: 0x%08X type: %d if_id: %d tap_id: %d\n",
 						pid_value->pid, cur_flow->handle, cur_flow->type, cur_flow->if_id, cur_flow->tap_id);
-				rc = del_flow(pid_value->pid, cur_flow);
 				list_del_init(&cur_flow->item);
+				rc = del_flow(pid_value->pid, cur_flow);
 				free(cur_flow);
 				break;
 			}
 		}
-		free(value);
 	}
 
 err:
@@ -465,6 +464,10 @@ err:
 			log_error("Failed sendto() message errno %d (%s)\n", errno,
 					strerror(errno));
 		}
+	}
+
+	if (value && !value_new) {
+		free(value);
 	}
 
 	return (rc ? rc : (int)sizeof(*data));
