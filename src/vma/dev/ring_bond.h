@@ -123,8 +123,9 @@ private:
 
 	ring_stats_t	m_ring_stat;
 	descq_t         m_rx_pool;
-	char            m_tapdev[IFNAMSIZ];
-	const uint32_t  m_n_sysvar_qp_compensation_level;
+	const uint32_t  m_sysvar_qp_compensation_level;
+	const int       m_netvsc_idx;
+	int             m_tap_idx;
 	int             m_tap_fd;
 	bool            m_tap_data_available;
 };

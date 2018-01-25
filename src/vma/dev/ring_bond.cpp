@@ -694,22 +694,30 @@ ring_bond_eth_netvsc::ring_bond_eth_netvsc(in_addr_t local_if, ring_resource_cre
 		net_device_val::bond_xmit_hash_policy bond_xmit_hash_policy, uint32_t mtu,
 		char* base_name, address_t l2_addr):
 	ring_bond_eth(local_if, p_ring_info, count, active_slaves, vlan, type, bond_xmit_hash_policy, mtu),
-	m_n_sysvar_qp_compensation_level(safe_mce_sys().qp_compensation_level),
+	m_sysvar_qp_compensation_level(safe_mce_sys().qp_compensation_level),
+	m_netvsc_idx(if_nametoindex(base_name)),
+	m_tap_idx(-1),
 	m_tap_fd(-1),
 	m_tap_data_available(false)
 {
 	struct ifreq ifr;
 	static int tap_id = 0;
 	int err, pid = getpid(), ioctl_sock = -1;
-	char command_str[TAP_STR_LENGTH], return_str[TAP_STR_LENGTH];
+	char command_str[TAP_STR_LENGTH], return_str[TAP_STR_LENGTH], tap_name[IFNAMSIZ];
 	memset(&m_ring_stat , 0, sizeof(m_ring_stat));
+
+	// Get netvsc interface index
+	if (!m_netvsc_idx) {
+		ring_logwarn("if_nametoindex failed to get netvsc index [%s]", base_name);
+		goto error;
+	}
 
 	// Initialize rx buffer poll
 	request_more_rx_buffers();
 	m_rx_pool.set_id("ring_bond_eth_netvsc (%p) : m_rx_pool", this);
 
 	// Tap name
-	snprintf(m_tapdev, IFNAMSIZ, TAP_NAME_FORMAT, base_name, pid & 0xFFFF, tap_id++ & 0xFFFF);
+	snprintf(tap_name, IFNAMSIZ, TAP_NAME_FORMAT, base_name, pid & 0xFFFF, tap_id++ & 0xFFFF);
 
 	// Open TAP device
 	if( (m_tap_fd = open("/dev/net/tun", O_RDWR)) < 0 ) {
@@ -719,7 +727,7 @@ ring_bond_eth_netvsc::ring_bond_eth_netvsc(in_addr_t local_if, ring_resource_cre
 
 	// Init ifr
 	memset(&ifr, 0, sizeof(ifr));
-	snprintf(ifr.ifr_name, IFNAMSIZ, "%s", m_tapdev);
+	snprintf(ifr.ifr_name, IFNAMSIZ, "%s", tap_name);
 
 	// Setting TAP attributes
 	ifr.ifr_flags = IFF_TAP | IFF_NO_PI | IFF_ONE_QUEUE;
@@ -735,7 +743,7 @@ ring_bond_eth_netvsc::ring_bond_eth_netvsc(in_addr_t local_if, ring_resource_cre
 	}
 
 	// Disable Ipv6 for TAP interface
-	snprintf(command_str, TAP_STR_LENGTH, TAP_DISABLE_IPV6, m_tapdev);
+	snprintf(command_str, TAP_STR_LENGTH, TAP_DISABLE_IPV6, tap_name);
 	if (run_and_retreive_system_command(command_str, return_str, TAP_STR_LENGTH)  < 0) {
 		ring_logwarn("sysctl ipv6 failed fd = %d, %m", m_tap_fd);
 		goto error;
@@ -751,19 +759,26 @@ ring_bond_eth_netvsc::ring_bond_eth_netvsc(in_addr_t local_if, ring_resource_cre
 	ifr.ifr_hwaddr.sa_family = AF_LOCAL;
 	memcpy(ifr.ifr_hwaddr.sa_data, l2_addr, ETH_ALEN);
 	if ( ( err = orig_os_api.ioctl(ioctl_sock, SIOCSIFHWADDR, &ifr)) < 0) {
-		ring_logwarn("ioctl SIOCSIFHWADDR failed %d %m, %s", err, m_tapdev);
+		ring_logwarn("ioctl SIOCSIFHWADDR failed %d %m, %s", err, tap_name);
 		goto error;
 	}
 
 	// Set link UP
 	if ( ( err = orig_os_api.ioctl(ioctl_sock, SIOCGIFFLAGS, &ifr)) < 0) {
-		ring_logwarn("ioctl SIOCGIFFLAGS failed %d %m, %s", err, m_tapdev);
+		ring_logwarn("ioctl SIOCGIFFLAGS failed %d %m, %s", err, tap_name);
 		goto error;
 	}
 
 	ifr.ifr_flags |= IFF_UP;
 	if ( ( err = orig_os_api.ioctl(ioctl_sock, SIOCSIFFLAGS, &ifr)) < 0) {
-		ring_logwarn("ioctl SIOCSIFFLAGS failed %d %m, %s", err, m_tapdev);
+		ring_logwarn("ioctl SIOCSIFFLAGS failed %d %m, %s", err, tap_name);
+		goto error;
+	}
+
+	// Get TAP interface index
+	m_tap_idx = if_nametoindex(tap_name);
+	if (!m_tap_idx) {
+		ring_logwarn("if_nametoindex failed to get tap index [%s]", tap_name);
 		goto error;
 	}
 
@@ -777,7 +792,7 @@ ring_bond_eth_netvsc::ring_bond_eth_netvsc(in_addr_t local_if, ring_resource_cre
 	m_ring_stat.p_ring_master = this;
 	m_ring_stat.n_type = RING_TAP;
 	m_ring_stat.tap.n_tap_fd = m_tap_fd;
-	memcpy(m_ring_stat.tap.s_tap_name, m_tapdev, IFNAMSIZ);
+	memcpy(m_ring_stat.tap.s_tap_name, tap_name, IFNAMSIZ);
 
 	vma_stats_instance_create_ring_block(&m_ring_stat);
 
@@ -881,9 +896,9 @@ bool ring_bond_eth_netvsc::detach_flow(flow_tuple& flow_spec_5t, pkt_rcvr_sink* 
 bool ring_bond_eth_netvsc::request_more_rx_buffers()
 {
 	// Assume locked!
-	ring_logfuncall("Allocating additional %d buffers for internal use", m_n_sysvar_qp_compensation_level);
+	ring_logfuncall("Allocating additional %d buffers for internal use", m_sysvar_qp_compensation_level);
 
-	bool res = g_buffer_pool_rx->get_buffers_thread_safe(m_rx_pool, this, m_n_sysvar_qp_compensation_level, 0);
+	bool res = g_buffer_pool_rx->get_buffers_thread_safe(m_rx_pool, this, m_sysvar_qp_compensation_level, 0);
 	if (!res) {
 		ring_logfunc("Out of mem_buf_desc from TX free pool for internal object pool");
 		return false;
