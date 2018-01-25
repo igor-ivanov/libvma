@@ -103,10 +103,10 @@ enum {
 	VMA_MSG_FLOW_TCP_3T = 4
 };
 
-enum {
+typedef enum {
 	VMA_MSG_FLOW_ADD = 1,
 	VMA_MSG_FLOW_DEL = 2
-};
+} msg_flow_t;
 
 struct vma_msg_flow {
 	struct vma_hdr hdr;

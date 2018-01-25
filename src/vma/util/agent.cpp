@@ -430,10 +430,8 @@ int agent::send_msg_flow(struct vma_msg_flow *data)
 		return -EBADF;
 	}
 
-	data->hdr.code = VMA_MSG_FLOW;
-	data->hdr.ver = VMA_AGENT_VER;
-	data->hdr.pid = getpid();
-	data->hdr.status = 1; /* wait answer */
+	/* wait answer */
+	data->hdr.status = 1;
 
 	/* send(VMA_MSG_TC) in blocking manner */
 	sys_call(rc, send, m_sock_fd, data, sizeof(*data), 0);

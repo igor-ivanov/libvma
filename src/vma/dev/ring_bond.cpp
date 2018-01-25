@@ -38,7 +38,6 @@
 
 #include "utils/bullseye.h"
 #include "vma/util/utils.h"
-#include "vma/util/agent.h"
 #include "vma/proto/ip_frag.h"
 #include "vma/proto/L2_address.h"
 #include "vma/proto/igmp_mgr.h"
@@ -859,6 +858,29 @@ int ring_bond_eth_netvsc::poll_and_process_element_tap_rx(void* pv_fd_ready_arra
 	return bytes;
 }
 
+void ring_bond_eth_netvsc::prepare_flow_message(vma_msg_flow& data, flow_tuple& flow_spec_5t, msg_flow_t flow_action)
+{
+	memset(&data, 0, sizeof(data));
+	data.hdr.code = VMA_MSG_FLOW;
+	data.hdr.ver = VMA_AGENT_VER;
+	data.hdr.pid = getpid();
+	data.action = flow_action;
+	data.if_id = m_netvsc_idx;
+	data.tap_id = m_tap_idx;
+	if (flow_spec_5t.is_3_tuple()) {
+		data.type = VMA_MSG_FLOW_TCP_3T;
+		data.flow.t3.dst_ip = flow_spec_5t.get_dst_ip();
+		data.flow.t3.dst_port = flow_spec_5t.get_dst_port();
+	} else {
+		data.type = VMA_MSG_FLOW_TCP_5T;
+		data.flow.t5.src_ip = flow_spec_5t.get_src_ip();
+		data.flow.t5.src_port = flow_spec_5t.get_src_port();
+		data.flow.t5.dst_ip = flow_spec_5t.get_dst_ip();
+		data.flow.t5.dst_port = flow_spec_5t.get_dst_port();
+	}
+}
+
+
 bool ring_bond_eth_netvsc::attach_flow(flow_tuple& flow_spec_5t, pkt_rcvr_sink* sink)
 {
 	bool ret;
@@ -873,22 +895,8 @@ bool ring_bond_eth_netvsc::attach_flow(flow_tuple& flow_spec_5t, pkt_rcvr_sink* 
 	if (ret && flow_spec_5t.is_tcp()) {
 		int rc = 0;
 		struct vma_msg_flow data;
+		prepare_flow_message(data, flow_spec_5t, VMA_MSG_FLOW_ADD);
 
-		memset(&data, 0, sizeof(data));
-		data.action = VMA_MSG_FLOW_ADD;
-		data.if_id = m_netvsc_idx;
-		data.tap_id = m_tap_idx;
-		if (flow_spec_5t.is_3_tuple()) {
-			data.type = VMA_MSG_FLOW_TCP_3T;
-			data.flow.t3.dst_ip = flow_spec_5t.get_dst_ip();
-			data.flow.t3.dst_port = flow_spec_5t.get_dst_port();
-		} else {
-			data.type = VMA_MSG_FLOW_TCP_5T;
-			data.flow.t5.src_ip = flow_spec_5t.get_src_ip();
-			data.flow.t5.src_port = flow_spec_5t.get_src_port();
-			data.flow.t5.dst_ip = flow_spec_5t.get_dst_ip();
-			data.flow.t5.dst_port = flow_spec_5t.get_dst_port();
-		}
 		rc = g_p_agent->send_msg_flow(&data);
 		if (rc != 0) {
 			ring_logwarn("Add TC rule failed with error=%d", rc);
@@ -912,22 +920,8 @@ bool ring_bond_eth_netvsc::detach_flow(flow_tuple& flow_spec_5t, pkt_rcvr_sink* 
 	if (ret && flow_spec_5t.is_tcp()) {
 		int rc = 0;
 		struct vma_msg_flow data;
+		prepare_flow_message(data, flow_spec_5t, VMA_MSG_FLOW_DEL);
 
-		memset(&data, 0, sizeof(data));
-		data.action = VMA_MSG_FLOW_DEL;
-		data.if_id = m_netvsc_idx;
-		data.tap_id = m_tap_idx;
-		if (flow_spec_5t.is_3_tuple()) {
-			data.type = VMA_MSG_FLOW_TCP_3T;
-			data.flow.t3.dst_ip = flow_spec_5t.get_dst_ip();
-			data.flow.t3.dst_port = flow_spec_5t.get_dst_port();
-		} else {
-			data.type = VMA_MSG_FLOW_TCP_5T;
-			data.flow.t5.src_ip = flow_spec_5t.get_src_ip();
-			data.flow.t5.src_port = flow_spec_5t.get_src_port();
-			data.flow.t5.dst_ip = flow_spec_5t.get_dst_ip();
-			data.flow.t5.dst_port = flow_spec_5t.get_dst_port();
-		}
 		rc = g_p_agent->send_msg_flow(&data);
 		if (rc != 0) {
 			ring_logwarn("Del TC rule failed with error=%d", rc);
