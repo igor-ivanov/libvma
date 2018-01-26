@@ -160,7 +160,7 @@ int add_flow(pid_t pid, struct store_flow *value)
 	/* if list processing */
 	cur_head = &daemon_cfg.if_list;
 	list_for_each(cur_entry, cur_head) {
-		cur_element = container_of(cur_entry, struct flow_element, item);
+		cur_element = list_entry(cur_entry, struct flow_element, item);
 		if (cur_element->value[0] == value->if_id) {
 			break;
 		}
@@ -216,7 +216,7 @@ int add_flow(pid_t pid, struct store_flow *value)
 	/* ip list processing */
 	cur_head = &cur_element->list;
 	list_for_each(cur_entry, cur_head) {
-		cur_element = container_of(cur_entry, struct flow_element, item);
+		cur_element = list_entry(cur_entry, struct flow_element, item);
 		if (cur_element->value[0] == (uint32_t)value->type &&
 			cur_element->value[1] == ip) {
 			ht = cur_element->ht_id & 0x0000FFFF;
@@ -270,7 +270,7 @@ int add_flow(pid_t pid, struct store_flow *value)
 	/* port list processing */
 	cur_head = &cur_element->list;
 	list_for_each(cur_entry, cur_head) {
-		cur_element = container_of(cur_entry, struct flow_element, item);
+		cur_element = list_entry(cur_entry, struct flow_element, item);
 		if (cur_element->value[0] == port) {
 			break;
 		}
@@ -384,7 +384,7 @@ int del_flow(pid_t pid, struct store_flow *value)
 	found = 0;
 	cur_head = &daemon_cfg.if_list;
 	list_for_each(cur_entry, cur_head) {
-		cur_element = container_of(cur_entry, struct flow_element, item);
+		cur_element = list_entry(cur_entry, struct flow_element, item);
 		if (cur_element->value[0] == value->if_id) {
 			found = 1;
 			break;
@@ -401,7 +401,7 @@ int del_flow(pid_t pid, struct store_flow *value)
 		found = 0;
 		cur_head = &cur_element->list;
 		list_for_each(cur_entry, cur_head) {
-			cur_element = container_of(cur_entry, struct flow_element, item);
+			cur_element = list_entry(cur_entry, struct flow_element, item);
 			if (cur_element->value[0] == (uint32_t)value->type &&
 				cur_element->value[1] == ip) {
 				ht = cur_element->ht_id & 0x0000FFFF;
@@ -420,9 +420,9 @@ int del_flow(pid_t pid, struct store_flow *value)
 			found = 0;
 			cur_head = &cur_element->list;
 			list_for_each(cur_entry, cur_head) {
-				cur_element = container_of(cur_entry, struct flow_element, item);
+				cur_element = list_entry(cur_entry, struct flow_element, item);
 				if (cur_element->value[0] == port) {
-					found = 0;
+					found = 1;
 					break;
 				}
 			}

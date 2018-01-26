@@ -274,8 +274,10 @@ static int proc_msg_exit(struct vma_hdr *msg_hdr, size_t size)
 	pid_value = hash_get(daemon_cfg.ht, data->hdr.pid);
 	if (pid_value) {
 		struct store_flow *flow_value = NULL;
-		while (!list_empty(&pid_value->flow_list)) {
-			flow_value = list_first_entry(&pid_value->flow_list, struct store_flow, item);
+		struct list_head *cur_entry = NULL;
+		struct list_head *tmp_entry = NULL;
+		list_for_each_safe(cur_entry, tmp_entry, &pid_value->flow_list) {
+			flow_value = list_entry(cur_entry, struct store_flow, item);
 			list_del_init(&flow_value->item);
 			del_flow(pid_value->pid, flow_value);
 			free(flow_value);
@@ -417,7 +419,7 @@ static int proc_msg_flow(struct vma_hdr *msg_hdr, size_t size, struct sockaddr_u
 
 	if (VMA_MSG_FLOW_ADD == data->action) {
 		list_for_each(cur_entry, &pid_value->flow_list) {
-			cur_flow = container_of(cur_entry, struct store_flow, item);
+			cur_flow = list_entry(cur_entry, struct store_flow, item);
 			if (value->type == cur_flow->type &&
 				value->if_id == cur_flow->if_id &&
 				value->tap_id == cur_flow->tap_id &&
@@ -440,7 +442,7 @@ static int proc_msg_flow(struct vma_hdr *msg_hdr, size_t size, struct sockaddr_u
 
 	if (VMA_MSG_FLOW_DEL == data->action) {
 		list_for_each(cur_entry, &pid_value->flow_list) {
-			cur_flow = container_of(cur_entry, struct store_flow, item);
+			cur_flow = list_entry(cur_entry, struct store_flow, item);
 			if (value->type == cur_flow->type &&
 				value->if_id == cur_flow->if_id &&
 				value->tap_id == cur_flow->tap_id &&

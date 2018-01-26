@@ -280,6 +280,8 @@ static int clean_process(pid_t pid)
 				struct rst_info rst;
 				struct store_fid *fid_value = NULL;
 				struct store_flow *flow_value = NULL;
+				struct list_head *cur_entry = NULL;
+				struct list_head *tmp_entry = NULL;
 				int i, j;
 
 				/* Cleanup fid store */
@@ -334,8 +336,8 @@ static int clean_process(pid_t pid)
 
 				/* Cleanup flow store */
 				j = 0;
-				while (!list_empty(&pid_value->flow_list)) {
-					flow_value = list_first_entry(&pid_value->flow_list, struct store_flow, item);
+				list_for_each_safe(cur_entry, tmp_entry, &pid_value->flow_list) {
+					flow_value = list_entry(cur_entry, struct store_flow, item);
 					log_debug("[%d] #%d found handle: 0x%08X type: %d if_id: %d tap_id: %d\n",
 							pid_value->pid, j,
 							flow_value->handle, flow_value->type, flow_value->if_id, flow_value->tap_id);
