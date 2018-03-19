@@ -3578,6 +3578,7 @@ int sockinfo_tcp::setsockopt(int __level, int __optname,
 			} else {
 				m_so_bindtodevice_ip = sockaddr.sin_addr.s_addr;
 
+#ifdef DEFINED_SOCKETXTREME
 				if (!is_connected()) {
 					/* Current implementation allows to create separate rings for tx and rx.
 					 * tx ring is created basing on destination ip during connect() call,
@@ -3601,6 +3602,7 @@ int sockinfo_tcp::setsockopt(int __level, int __optname,
 					}
 					unlock_tcp_con();
 				}
+#endif // DEFINED_SOCKETXTREME				
 			}
 			// handle TX side
 			if (m_p_connected_dst_entry) {
