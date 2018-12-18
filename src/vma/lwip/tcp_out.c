@@ -392,9 +392,11 @@ tcp_write(struct tcp_pcb *pcb, const void *arg, u32_t len, u8_t is_dummy)
 #endif /* TCP_CHECKSUM_ON_COPY */
   err_t err;
   /* don't allocate segments bigger than half the maximum window we ever received */
-  u16_t mss_local = LWIP_MIN(pcb->mss, pcb->snd_wnd_max/2);
-  mss_local = mss_local ? mss_local : pcb->mss;
+fprintf(stderr, "[ii] %s:%d len=%d mss=%d snd_max=%d snd_buf=%d snd_queuelen=%d\n", __FUNCTION__, __LINE__, (int)len, (int)pcb->mss, (int)pcb->snd_wnd_max, (int)pcb->snd_buf, (int)pcb->snd_queuelen);
+  u16_t mss_local = LWIP_MIN(32000, pcb->snd_wnd_max/2);
 
+//  u16_t mss_local = LWIP_MIN(pcb->mss, pcb->snd_wnd_max/2);
+  mss_local = mss_local ? mss_local : pcb->mss;
   int byte_queued = pcb->snd_nxt - pcb->lastack;
   if ( len < pcb->mss && !is_dummy)
           pcb->snd_sml_add = (pcb->unacked ? pcb->unacked->len : 0) + byte_queued;

@@ -833,7 +833,10 @@ static void do_global_ctors_helper()
 	NEW_CTOR(g_buffer_pool_rx, buffer_pool(safe_mce_sys().rx_num_bufs, RX_BUF_SIZE(g_p_net_device_table_mgr->get_max_mtu()), buffer_pool::free_rx_lwip_pbuf_custom));
  	g_buffer_pool_rx->set_RX_TX_for_stats(true);
 
- 	NEW_CTOR(g_buffer_pool_tx, buffer_pool(safe_mce_sys().tx_num_bufs, get_lwip_tcp_mss(g_p_net_device_table_mgr->get_max_mtu(), safe_mce_sys().lwip_mss) + 92, buffer_pool::free_tx_lwip_pbuf_custom));
+fprintf(stderr, "[ii] %s:%d mtu=%d mss=%d lwip_mss=%d\n", __FUNCTION__, __LINE__, (int)g_p_net_device_table_mgr->get_max_mtu(), (int)safe_mce_sys().lwip_mss, get_lwip_tcp_mss(g_p_net_device_table_mgr->get_max_mtu(), safe_mce_sys().lwip_mss));
+ 	NEW_CTOR(g_buffer_pool_tx, buffer_pool(safe_mce_sys().tx_num_bufs, 32000 + 92, buffer_pool::free_tx_lwip_pbuf_custom));
+
+// 	NEW_CTOR(g_buffer_pool_tx, buffer_pool(safe_mce_sys().tx_num_bufs, get_lwip_tcp_mss(g_p_net_device_table_mgr->get_max_mtu(), safe_mce_sys().lwip_mss) + 92, buffer_pool::free_tx_lwip_pbuf_custom));
  	g_buffer_pool_tx->set_RX_TX_for_stats(false);
 
  	NEW_CTOR(g_tcp_seg_pool,  tcp_seg_pool(safe_mce_sys().tx_num_segs_tcp));

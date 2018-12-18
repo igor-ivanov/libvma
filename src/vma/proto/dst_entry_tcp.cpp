@@ -114,8 +114,9 @@ ssize_t dst_entry_tcp::fast_send(const iovec* p_iov, const ssize_t sz_iov, vma_w
 			send_wqe_h.enable_tso(send_wqe,
 					(void *)((uint8_t*)p_pkt + hdr_alignment_diff),
 					m_header.m_total_hdr_len + p_pkt->hdr.m_tcp_hdr.doff * 4,
-					total_packet_len);
+					1460);
 			m_p_send_wqe = &send_wqe;
+fprintf(stderr, "[ii] %s:%d sz_iov=%d total_packet_len=%d m_header.m_total_hdr_len=%d p_pkt->hdr.m_ip_hdr.tot_len=%d\n", __FUNCTION__, __LINE__, (int)sz_iov, (int)total_packet_len, (int)m_header.m_total_hdr_len, (int)p_tcp_iov[0].iovec.iov_len + m_header.m_ip_header_len);
 
 			m_sge[0].addr = (uintptr_t)((uint8_t *)&p_pkt->hdr.m_tcp_hdr + p_pkt->hdr.m_tcp_hdr.doff * 4);
 			m_sge[0].length = p_tcp_iov[0].iovec.iov_len - p_pkt->hdr.m_tcp_hdr.doff * 4;
