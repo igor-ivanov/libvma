@@ -67,7 +67,7 @@
 #define TCP_CHECKSUM_ON_COPY_SANITY_CHECK   0
 #endif
 
-#if LWIP_DEBUG_ENABLE
+//#if LWIP_DEBUG_ENABLE
 static char* _dump_seg(struct tcp_seg *seg)
 {
 	static __thread char _tcp_dump_buf[100];
@@ -96,7 +96,7 @@ static char* _dump_seg(struct tcp_seg *seg)
 			seg_num, seg_len, pbuf_num, pbuf_len);
 	return _tcp_dump_buf;
 }
-#endif /* LWIP_DEBUG_ENABLE */
+//#endif /* LWIP_DEBUG_ENABLE */
 
 sys_now_fn sys_now;
 void register_sys_now(sys_now_fn fn)
@@ -392,8 +392,11 @@ tcp_write(struct tcp_pcb *pcb, const void *arg, u32_t len, u8_t is_dummy)
 #endif /* TCP_CHECKSUM_ON_COPY */
   err_t err;
   /* don't allocate segments bigger than half the maximum window we ever received */
-fprintf(stderr, "[ii] %s:%d len=%d mss=%d snd_max=%d snd_buf=%d snd_queuelen=%d\n", __FUNCTION__, __LINE__, (int)len, (int)pcb->mss, (int)pcb->snd_wnd_max, (int)pcb->snd_buf, (int)pcb->snd_queuelen);
-  u16_t mss_local = LWIP_MIN(32000, pcb->snd_wnd_max/2);
+fprintf(stderr, "[ii] %s:%d len=%d mss=%d snd_max=%d snd_buf=%d snd_queuelen=%d\n",
+	__FUNCTION__, __LINE__,
+	(int)len, (int)pcb->mss, (int)pcb->snd_wnd_max, (int)pcb->snd_buf, (int)pcb->snd_queuelen);
+extern int g_tso_size;
+  u16_t mss_local = LWIP_MIN(g_tso_size, (int)pcb->snd_wnd_max/2);
 
 //  u16_t mss_local = LWIP_MIN(pcb->mss, pcb->snd_wnd_max/2);
   mss_local = mss_local ? mss_local : pcb->mss;
@@ -564,6 +567,7 @@ fprintf(stderr, "[ii] %s:%d len=%d mss=%d snd_max=%d snd_buf=%d snd_queuelen=%d\
     if ((seg = tcp_create_segment(pcb, p, 0, pcb->snd_lbb + pos, optflags)) == NULL) {
       goto memerr;
     }
+
 #if TCP_OVERSIZE_DBGCHECK
     seg->oversize_left = oversize;
 #endif /* TCP_OVERSIZE_DBGCHECK */
@@ -1119,6 +1123,8 @@ tcp_output(struct tcp_pcb *pcb)
 #endif /* TCP_TSO_DEBUG */
 
   while (seg){
+    fprintf(stderr, "tcp_output: seg=%p : %d snd_wnd: %d cwnd: %d wnd: %-5d unsent %s\n", seg, seg->p->tot_len, pcb->snd_wnd, pcb->cwnd,
+                		wnd, _dump_seg(pcb->unsent));
     /* Split the segment in case of a small window */
     if ((NULL == pcb->unacked) && (wnd) && ((seg->len + seg->seqno - pcb->lastack) > wnd)) {
       LWIP_ASSERT("tcp_output: no window for dummy packet", !LWIP_IS_DUMMY_SEGMENT(seg));
@@ -1129,7 +1135,7 @@ tcp_output(struct tcp_pcb *pcb)
     if (((seg->seqno - pcb->lastack + seg->len) <= wnd)){
       LWIP_ASSERT("RST not expected here!",
       (TCPH_FLAGS(seg->tcphdr) & TCP_RST) == 0);
-      
+fprintf(stderr, "[ii] %s:%d seg: %p seg->len=%d seg->p->tot_len=%d\n", __FUNCTION__, __LINE__, seg, (seg ? seg->len : 0), (seg && seg->p ? seg->p->tot_len : 0));      
       /* Stop sending if the nagle algorithm would prevent it
        * Don't stop:
        * - if tcp_write had a memory error before (prevent delayed ACK timeout) or
@@ -1226,6 +1232,7 @@ tcp_output(struct tcp_pcb *pcb)
        seg = pcb->unsent;
     }
     else {
+fprintf(stderr, "[ii] %s:%d seg: %p seg->len=%d seg->p->tot_len=%d\n", __FUNCTION__, __LINE__, seg, (seg ? seg->len : 0), (seg && seg->p ? seg->p->tot_len : 0));      
       break;
     }
   }
@@ -1249,6 +1256,7 @@ tcp_output(struct tcp_pcb *pcb)
 	  // Fetch pbuf for the next packet.
 	  pcb->pbuf_alloc = tcp_tx_pbuf_alloc(pcb, 0, PBUF_RAM);
   }
+fprintf(stderr, "[ii] %s:%d seg: %p seg->len=%d seg->p->tot_len=%d\n", __FUNCTION__, __LINE__, seg, (seg ? seg->len : 0), (seg && seg->p ? seg->p->tot_len : 0));      
 
   return ERR_OK;
 }
@@ -1265,6 +1273,8 @@ tcp_output_segment(struct tcp_seg *seg, struct tcp_pcb *pcb)
   u16_t len;
   u32_t *opts;
   u16_t flags = 0;
+
+fprintf(stderr, "[ii] %s:%d seg: %p seg->len=%d seg->p->tot_len=%d\n", __FUNCTION__, __LINE__, seg, (seg ? seg->len : 0), (seg && seg->p ? seg->p->tot_len : 0));      
 
   /* The TCP header has already been constructed, but the ackno and
    wnd fields remain. */

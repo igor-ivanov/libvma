@@ -456,7 +456,7 @@ void mce_sys_var::read_hv()
 		}
 	}
 }
-
+int g_tso_size = 0;
 void mce_sys_var::get_env_params()
 {
 	int c = 0, len =0;
@@ -1211,6 +1211,7 @@ void mce_sys_var::get_env_params()
 
 	if((env_ptr = getenv(SYS_VAR_TSO)) != NULL)
 		enable_tso = atoi(env_ptr) ? true : false;
+g_tso_size = (enable_tso ? atoi(env_ptr) : 0);
 
 	if ((env_ptr = getenv(SYS_VAR_CLOSE_ON_DUP2)) != NULL)
 		close_on_dup2 = atoi(env_ptr) ? true : false;
