@@ -1020,11 +1020,11 @@ tcp_receive(struct tcp_pcb *pcb, tcp_in_data* in_data)
 #else
       while (pcb->unacked != NULL) {
   #if LWIP_TSO
-fprintf(stderr, "[ii] %s:%d +++++++++++++++++++++++++++++++++ len=%d qlen=%d\n", __FUNCTION__, __LINE__, pcb->unacked->len, pcb->snd_queuelen);
+//fprintf(stderr, "[ii] %s:%d +++++++++++++++++++++++++++++++++ len=%d qlen=%d\n", __FUNCTION__, __LINE__, pcb->unacked->len, pcb->snd_queuelen);
          if (pcb->unacked->len > 1500) {
              pcb->snd_queuelen -= tcp_shrink_segment(pcb, pcb->unacked, in_data->ackno);
          }
-fprintf(stderr, "[ii] %s:%d +++++++++++++++++++++++++++++++++ len=%d qlen=%d\n", __FUNCTION__, __LINE__, pcb->unacked->len, pcb->snd_queuelen);
+//fprintf(stderr, "[ii] %s:%d +++++++++++++++++++++++++++++++++ len=%d qlen=%d\n", __FUNCTION__, __LINE__, pcb->unacked->len, pcb->snd_queuelen);
  #endif /* LWIP_TSO */
  
           if (!(TCP_SEQ_LEQ(pcb->unacked->seqno + TCP_TCPLEN(pcb->unacked), in_data->ackno))) {

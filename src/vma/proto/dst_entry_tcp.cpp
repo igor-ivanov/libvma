@@ -77,16 +77,26 @@ ssize_t dst_entry_tcp::fast_send(const iovec* p_iov, const ssize_t sz_iov, vma_w
 	vma_ibv_send_wr send_wqe;
 	wqe_send_handler send_wqe_h;
 
+	static int count = 0;
+	count++;
+
 	tcp_iovec* p_tcp_iov = NULL;
 	bool no_copy = true;
 	if (likely(sz_iov == 1 && !is_set(attr, VMA_TX_PACKET_REXMIT))) {
 		p_tcp_iov = (tcp_iovec*)p_iov;
 		if (unlikely(!m_p_ring->is_active_member(p_tcp_iov->p_desc->p_desc_owner, m_id))) {
 			no_copy = false;
+			dst_tcp_logwarn("@@ %d FALSE ACTIVE sz_iov %zu, total_packet_len %zu, m_max_inline %d",
+					count, sz_iov, total_packet_len, m_max_inline);
 			dst_tcp_logdbg("p_desc=%p wrong desc_owner=%p, this ring=%p. did migration occurred?", p_tcp_iov->p_desc, p_tcp_iov->p_desc->p_desc_owner, m_p_ring);
 			//todo can we handle this in migration (by going over all buffers lwip hold) instead for every send?
 		}
 	} else {
+		p_tcp_iov = (tcp_iovec*)p_iov;
+		total_packet_len = p_tcp_iov[0].iovec.iov_len + m_header.m_total_hdr_len;
+		dst_tcp_logwarn("@@ %d FALSE sz_iov %zu, is_set(attr, VMA_TX_PACKET_REXMIT) %d, total_packet_len %zu, m_max_inline %d",
+				count, sz_iov, is_set(attr, VMA_TX_PACKET_REXMIT), total_packet_len, m_max_inline);
+
 		no_copy = false;
 	}
 
@@ -109,9 +119,9 @@ ssize_t dst_entry_tcp::fast_send(const iovec* p_iov, const ssize_t sz_iov, vma_w
 		/* update L3(Total Length) with total size of L3 header, TCP header and data */
 		p_pkt->hdr.m_ip_hdr.tot_len = (htons)(p_tcp_iov[0].iovec.iov_len + m_header.m_ip_header_len);
 
-fprintf(stderr, "[ii] %s:%d m_max_inline=%d sz_iov=%d total_packet_len=%d m_header.m_total_hdr_len=%d p_pkt->hdr.m_ip_hdr.tot_len=%d\n",
-	__FUNCTION__, __LINE__,
-	(int)m_max_inline, (int)sz_iov, (int)total_packet_len, (int)m_header.m_total_hdr_len, (int)p_tcp_iov[0].iovec.iov_len + m_header.m_ip_header_len);
+//fprintf(stderr, "[ii] %s:%d m_max_inline=%d sz_iov=%d total_packet_len=%d m_header.m_total_hdr_len=%d p_pkt->hdr.m_ip_hdr.tot_len=%d\n",
+//	__FUNCTION__, __LINE__,
+//	(int)m_max_inline, (int)sz_iov, (int)total_packet_len, (int)m_header.m_total_hdr_len, (int)p_tcp_iov[0].iovec.iov_len + m_header.m_ip_header_len);
 		if ((total_packet_len >= m_max_inline) && m_p_ring->is_tso()) {
 			send_wqe_h.init_not_inline_wqe(send_wqe, m_sge, 1);
 			send_wqe_h.enable_tso(send_wqe,
@@ -124,6 +134,7 @@ fprintf(stderr, "[ii] %s:%d m_max_inline=%d sz_iov=%d total_packet_len=%d m_head
 			m_sge[0].length = p_tcp_iov[0].iovec.iov_len - p_pkt->hdr.m_tcp_hdr.doff * 4;
 			m_p_send_wqe->wr_id = (uintptr_t)p_tcp_iov[0].p_desc;
 		} else {
+			dst_tcp_logwarn("@@ count %d, total_packet_len %zu, m_max_inline %d", count, total_packet_len, m_max_inline);
 			m_p_send_wqe = (total_packet_len < m_max_inline ? &m_inline_send_wqe : &m_not_inline_send_wqe);
 
 			m_sge[0].addr = (uintptr_t)((uint8_t*)p_pkt + hdr_alignment_diff);
@@ -145,6 +156,7 @@ fprintf(stderr, "[ii] %s:%d m_max_inline=%d sz_iov=%d total_packet_len=%d m_head
 		}
 	}
 	else { // We don'nt support inline in this case, since we believe that this a very rare case
+		dst_tcp_logwarn("@@ ELSE total_packet_len %zu, m_max_inline %d", total_packet_len, m_max_inline);
 		p_mem_buf_desc = get_buffer(is_set(attr, VMA_TX_PACKET_BLOCK));
 		if (p_mem_buf_desc == NULL) {
 			ret = -1;

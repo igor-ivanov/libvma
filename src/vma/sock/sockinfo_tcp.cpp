@@ -664,7 +664,7 @@ unsigned sockinfo_tcp::tx_wait(int & err, bool is_blocking)
 	int poll_count = 0;
 	si_tcp_logfunc("sz = %d rx_count=%d", sz, m_n_rx_pkt_ready_list_count);
 	err = 0;
-	while(is_rts() && (sz = tcp_sndbuf(&m_pcb)) == 0) {
+	while(is_rts() && (sz = tcp_sndbuf(&m_pcb)) < 64000) {
 		err = rx_wait(poll_count, is_blocking);
 		//AlexV:Avoid from going to sleep, for the blocked socket of course, since
 		// progress engine may consume an arrived credit and it will not wakeup the
@@ -820,7 +820,7 @@ retry_is_ready:
 		while (pos < p_iov[i].iov_len) {
 			//tx_size = tx_wait();
 			tx_size = tcp_sndbuf(&m_pcb);
-			if (tx_size == 0) {
+			if (tx_size < p_iov[i].iov_len) {
 				if (unlikely(!is_rts())) {
 					si_tcp_logdbg("TX on disconnected socket");
 					ret = -1;
