@@ -301,7 +301,7 @@ inline void qp_mgr_eth_mlx5::set_signal_in_next_send_wqe()
 	wqe->ctrl.data[2] = htonl(8);
 }
 
-inline void qp_mgr_eth_mlx5::ring_doorbell(uint64_t* wqe, int num_wqebb, int num_wqebb_top)
+inline void qp_mgr_eth_mlx5::ring_doorbell(uint64_t* wqe, int db_method, int num_wqebb, int num_wqebb_top)
 {
 	uint64_t* dst = (uint64_t*)((uint8_t*)m_mlx5_qp.bf.reg + m_mlx5_qp.bf.offset);
 	uint64_t* src = wqe;
@@ -315,7 +315,7 @@ inline void qp_mgr_eth_mlx5::ring_doorbell(uint64_t* wqe, int num_wqebb, int num
 
 	// This wc_wmb ensures ordering between DB record and BF copy */
 	wc_wmb();
-	if (likely(m_db_method == MLX5_DB_METHOD_BF)) {
+	if (likely(db_method == MLX5_DB_METHOD_BF)) {
 		/* Copying src to BlueFlame register buffer by Write Combining cnt WQEBBs
 		 * Avoid using memcpy() to copy to BlueFlame page, since memcpy()
 		 * implementations may use move-string-buffer assembler instructions,
@@ -437,8 +437,7 @@ inline int qp_mgr_eth_mlx5::fill_wqe(vma_ibv_send_wr *pswr)
 			rest_space = align_to_WQEBB_up(wqe_size)/4;
 			qp_logfunc("data_len: %d inline_len: %d wqe_size: %d wqebbs: %d",
 				data_len-inline_len, inline_len, wqe_size, rest_space);
-			ring_doorbell((uint64_t *)m_sq_wqe_hot, rest_space);
-			dbg_dump_wqe((uint32_t *)m_sq_wqe_hot, wqe_size*16);
+			ring_doorbell((uint64_t *)m_sq_wqe_hot, m_db_method, rest_space);
 			return rest_space;
 		} else {
 			// wrap around case, first filling till the end of m_sq_wqes
@@ -478,7 +477,7 @@ inline int qp_mgr_eth_mlx5::fill_wqe(vma_ibv_send_wr *pswr)
 			dbg_dump_wqe((uint32_t*)m_sq_wqe_hot, rest_space*4*16);
 			dbg_dump_wqe((uint32_t*)m_sq_wqes, max_inline_len*4*16);
 
-			ring_doorbell((uint64_t*)m_sq_wqe_hot, rest_space, max_inline_len);
+			ring_doorbell((uint64_t*)m_sq_wqe_hot, m_db_method, rest_space, max_inline_len);
 			return rest_space+max_inline_len;
 		}
 	} else {
@@ -505,8 +504,7 @@ inline int qp_mgr_eth_mlx5::fill_wqe(vma_ibv_send_wr *pswr)
 			// configuring control
 			m_sq_wqe_hot->ctrl.data[1] = htonl((m_mlx5_qp.qpn << 8) | wqe_size);
 			inline_len = align_to_WQEBB_up(wqe_size)/4;
-			ring_doorbell((uint64_t*)m_sq_wqe_hot, inline_len);
-			dbg_dump_wqe((uint32_t *)m_sq_wqe_hot, wqe_size*16);
+			ring_doorbell((uint64_t*)m_sq_wqe_hot, m_db_method, inline_len);
 		} else {
 			// We supporting also VMA_IBV_WR_SEND_TSO, it is the case
 			wqe_size = fill_wqe_lso(pswr);
@@ -576,17 +574,12 @@ inline int qp_mgr_eth_mlx5::fill_wqe_lso(vma_ibv_send_wr* pswr)
 	// sending by BlueFlame or DoorBell covering wrap around
 	if (likely(inline_len <= 4)) {
 		if (likely(bottom_hdr_sz == 0)) {
-			dbg_dump_wqe((uint32_t*)m_sq_wqe_hot, inline_len * 4 * 16);
-			ring_doorbell((uint64_t*)m_sq_wqe_hot, inline_len);
+			ring_doorbell((uint64_t*)m_sq_wqe_hot, MLX5_DB_METHOD_DB, inline_len);
 		} else {
-			dbg_dump_wqe((uint32_t*)m_sq_wqe_hot, rest * 4 * 16);
-			dbg_dump_wqe((uint32_t*)m_sq_wqes, inline_len * 4 * 16);
-
-			ring_doorbell((uint64_t*)m_sq_wqe_hot, rest, inline_len);
-			return rest + inline_len;
+			ring_doorbell((uint64_t*)m_sq_wqe_hot, MLX5_DB_METHOD_DB, bottom_hdr_sz, inline_len - bottom_hdr_sz);
 		}
 	} else {
-		ring_doorbell((uint64_t*)m_sq_wqe_hot, inline_len);
+		ring_doorbell((uint64_t*)m_sq_wqe_hot, MLX5_DB_METHOD_DB, inline_len);
 	}
 	return inline_len;
 #else
