@@ -8,16 +8,12 @@ Name: libvma
 Version: 9.0.2
 Release: 1%{?dist}
 Summary: A library for boosting TCP and UDP traffic (over RDMA hardware)
-%if 0%{?rhl}%{?fedora} == 0
-Group: System Environment/Libraries
-%endif
 
 License: GPLv2 or BSD
 Url: https://github.com/Mellanox/%{name}
 Source0: %{url}/archive/%{version}/%{name}-%{version}.tar.gz
 
-BuildRoot: %(mktemp -ud %{_tmppath}/%{name}-%{version}-%{release}-XXXXXX)
-
+# libvma currently supports only the following architectures
 ExclusiveArch: x86_64 ppc64le ppc64 aarch64
 
 BuildRequires: pkgconfig
@@ -30,8 +26,6 @@ BuildRequires: librdmacm-devel
 %if 0%{?rhel} >= 7 || 0%{?fedora} >= 24 || 0%{?suse_version} >= 1500
 BuildRequires: libnl3-devel
 %endif
-
-Prefix: %{_prefix}
 
 %description
 libvma is a LD_PRELOAD-able library that boosts performance of TCP and
@@ -49,9 +43,6 @@ directly, as opposed to loading it dynamically with LD_PRELOAD.
 
 %package devel
 Summary: Header files and link required to develop with Libvma
-%if 0%{?rhl}%{?fedora} == 0
-Group: System Environment/Libraries
-%endif
 Requires: %{name}%{?_isa} = %{version}-%{release}
 
 %description devel
@@ -60,9 +51,6 @@ interfaces.
 
 %package utils
 Summary: Libvma utilities
-%if 0%{?rhl}%{?fedora} == 0
-Group: System Environment/Libraries
-%endif
 Requires: %{name}%{?_isa} = %{version}-%{release}
 
 %description utils
@@ -91,8 +79,6 @@ cp -f src/vma/.libs/%{name}.so %{name}-debug.so
 %{pmake}
 
 %install
-[ "${RPM_BUILD_ROOT}" != "/" -a -d ${RPM_BUILD_ROOT} ] && rm -rf ${RPM_BUILD_ROOT}
-
 mkdir -p $RPM_BUILD_ROOT%{_includedir}/mellanox
 mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}
 mkdir -p $RPM_BUILD_ROOT%{_libdir}
@@ -157,10 +143,6 @@ if [ $1 = 0 ]; then
     fi
 fi
 
-
-%clean
-[ "${RPM_BUILD_ROOT}" != "/" -a -d ${RPM_BUILD_ROOT} ] && rm -rf ${RPM_BUILD_ROOT}
-
 %postun
 # Package upgrade
 /sbin/ldconfig
@@ -168,10 +150,8 @@ if type systemctl >/dev/null 2>&1; then
     systemctl --system daemon-reload >/dev/null 2>&1 || true
 fi
 
-
 %files
-%{_libdir}/%{name}*.so*
-%{_libdir}/%{name}.so
+%{_libdir}/%{name}.so*
 %doc %{_docdir}/%{name}-%{version}/README.txt
 %doc %{_docdir}/%{name}-%{version}/journal.txt
 %doc %{_docdir}/%{name}-%{version}/VMA_VERSION
@@ -188,13 +168,14 @@ fi
 %license COPYING
 %endif
 
-
 %files devel
 %{_includedir}/mellanox/vma_extra.h
+%if "%{use_extralib}" == "1"
+%{_libdir}/%{name}-debug.so
+%endif
 
 %files utils
 %{_bindir}/vma_stats
-
 
 %changelog
 * Fri Apr 17 2020 Igor Ivanov <igor.ivanov.va@gmail.com> 9.0.2-1
