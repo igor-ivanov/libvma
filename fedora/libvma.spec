@@ -1,17 +1,18 @@
 %{!?configure_options: %global configure_options %{nil}}
-%{!?use_extralib: %global use_extralib 0}
+%{!?use_rel: %global use_rel 1}
 
-%global pmake %{__make} %{?_smp_mflags} %{?mflags} V=1
-%global use_systemd %(if ( test -d "%{_unitdir}" > /dev/null); then echo -n '1'; else echo -n '0'; fi)
+%{!?make_build: %global make_build %{__make} %{?_smp_mflags} %{?mflags} V=1}
+%{!?run_ldconfig: %global run_ldconfig %{?ldconfig}}
+%{!?_pkgdocdir: %global _pkgdocdir %{_docdir}/%{name}-%{version}}
 
 Name: libvma
 Version: 9.0.2
-Release: 1%{?dist}
+Release: %{use_rel}%{?dist}
 Summary: A library for boosting TCP and UDP traffic (over RDMA hardware)
 
 License: GPLv2 or BSD
-Url: https://github.com/Mellanox/%{name}
-Source0: %{url}/archive/%{version}/%{name}-%{version}.tar.gz
+Url: https://github.com/Mellanox/libvma
+Source0: https://github.com/Mellanox/libvma/archive/%{version}/%{name}-%{version}.tar.gz
 
 # libvma currently supports only the following architectures
 ExclusiveArch: x86_64 ppc64le ppc64 aarch64
@@ -23,9 +24,7 @@ BuildRequires: libtool
 BuildRequires: gcc-c++
 BuildRequires: libibverbs-devel
 BuildRequires: librdmacm-devel
-%if 0%{?rhel} >= 7 || 0%{?fedora} >= 24 || 0%{?suse_version} >= 1500
 BuildRequires: libnl3-devel
-%endif
 
 %description
 libvma is a LD_PRELOAD-able library that boosts performance of TCP and
@@ -33,11 +32,11 @@ UDP traffic. It allows application written over standard socket API to
 handle fast path data traffic from user space over Ethernet and/or
 Infiniband with full network stack bypass and get better throughput,
 latency and packets/sec rate.
-.
+
 No application binary change is required for that.
 libvma is supported by RDMA capable devices that support "verbs"
 IBV_QPT_RAW_PACKET QP for Ethernet and/or IBV_QPT_UD QP for IPoIB.
-.
+
 This package includes headers for building programs with libvma's interface
 directly, as opposed to loading it dynamically with LD_PRELOAD.
 
@@ -61,58 +60,30 @@ analyzing Libvma statistic.
 %setup -q
 
 %build
-export revision=1
-[ -f configure ] || ./autogen.sh
+export revision=%{use_rel}
+if [ ! -e configure ] && [ -e autogen.sh ]; then
+    VMA_RELEASE=%{use_rel} ./autogen.sh
+fi
 
-# Debug binary with extra output verbosity
-%if "%{use_extralib}" == "1"
-%configure --enable-opt-log=none \
+%configure --docdir=%{_pkgdocdir} \
            %{?configure_options}
-%{pmake}
-cp -f src/vma/.libs/%{name}.so %{name}-debug.so
-%{pmake} clean
-%endif
-
-# Primary installation set
-%configure --docdir=%{_docdir}/%{name}-%{version} \
-           %{?configure_options}
-%{pmake}
+%{make_build}
 
 %install
-mkdir -p $RPM_BUILD_ROOT%{_includedir}/mellanox
-mkdir -p $RPM_BUILD_ROOT%{_sysconfdir}
-mkdir -p $RPM_BUILD_ROOT%{_libdir}
+%{make_build} DESTDIR=${RPM_BUILD_ROOT} install
 
-%{pmake} DESTDIR=${RPM_BUILD_ROOT} install
-
-rm -f $RPM_BUILD_ROOT%{_libdir}/*.la
+find $RPM_BUILD_ROOT%{_libdir} -name '*.la' -delete
 
 install -m 644 src/vma/vma_extra.h $RPM_BUILD_ROOT/%{_includedir}/mellanox/vma_extra.h
 install -m 644 src/vma/util/libvma.conf $RPM_BUILD_ROOT/%{_sysconfdir}/
 install -s -m 755 src/stats/vma_stats $RPM_BUILD_ROOT/%{_bindir}/vma_stats
 install -s -m 755 tools/daemon/vmad $RPM_BUILD_ROOT/%{_sbindir}/vmad
-%if "%{use_extralib}" == "1"
-install -m 755 ./%{name}-debug.so $RPM_BUILD_ROOT/%{_libdir}/%{name}-debug.so
-%endif
-%if "%{use_systemd}" == "1"
 install -D -m 644 contrib/scripts/vma.service $RPM_BUILD_ROOT/%{_unitdir}/vma.service
 install -m 755 contrib/scripts/vma.init $RPM_BUILD_ROOT/%{_sbindir}/vma
-%else
-install -m 755 contrib/scripts/vma.init $RPM_BUILD_ROOT/%{_sysconfdir}/init.d/vma
-%endif
 
 %post
-if [ `grep memlock /etc/security/limits.conf |grep unlimited |wc -l` -le 0 ]; then
-        echo "*             -   memlock        unlimited" >> /etc/security/limits.conf
-        echo "*          soft   memlock        unlimited" >> /etc/security/limits.conf
-        echo "*          hard   memlock        unlimited" >> /etc/security/limits.conf
-        echo "- Changing max locked memory to unlimited (in /etc/security/limits.conf)"
-        echo "  Please log out from the shell and login again in order to update this change "
-        echo "  Read more about this topic in the VMA's User Manual"
-fi
-/sbin/ldconfig
+%{run_ldconfig}
 
-# Package setup, not upgrade
 if [ $1 = 1 ]; then
     if type systemctl >/dev/null 2>&1; then
         systemctl --no-reload enable vma.service >/dev/null 2>&1 || true
@@ -126,7 +97,6 @@ if [ $1 = 1 ]; then
 fi
 
 %preun
-# Package removal, not upgrade
 if [ $1 = 0 ]; then
     if type systemctl >/dev/null 2>&1; then
         systemctl --no-reload disable vma.service >/dev/null 2>&1 || true
@@ -144,35 +114,25 @@ if [ $1 = 0 ]; then
 fi
 
 %postun
-# Package upgrade
-/sbin/ldconfig
+%{run_ldconfig}
 if type systemctl >/dev/null 2>&1; then
     systemctl --system daemon-reload >/dev/null 2>&1 || true
 fi
 
 %files
 %{_libdir}/%{name}.so*
-%doc %{_docdir}/%{name}-%{version}/README.txt
-%doc %{_docdir}/%{name}-%{version}/journal.txt
-%doc %{_docdir}/%{name}-%{version}/VMA_VERSION
+%doc %{_pkgdocdir}/README.txt
+%doc %{_pkgdocdir}/journal.txt
+%doc %{_pkgdocdir}/VMA_VERSION
 %config(noreplace) %{_sysconfdir}/libvma.conf
 %config(noreplace) %{_sysconfdir}/security/limits.d/30-libvma-limits.conf
 %{_sbindir}/vmad
-%if "%{use_systemd}" == "1"
 %{_prefix}/lib/systemd/system/vma.service
 %{_sbindir}/vma
-%else
-%{_sysconfdir}/init.d/vma
-%endif
-%if 0%{?rhel} >= 7 || 0%{?fedora} >= 24 || 0%{?suse_version} >= 1500
 %license COPYING
-%endif
 
 %files devel
 %{_includedir}/mellanox/vma_extra.h
-%if "%{use_extralib}" == "1"
-%{_libdir}/%{name}-debug.so
-%endif
 
 %files utils
 %{_bindir}/vma_stats
