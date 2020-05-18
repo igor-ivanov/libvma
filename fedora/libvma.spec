@@ -2,7 +2,6 @@
 %{!?use_rel: %global use_rel 1}
 
 %{!?make_build: %global make_build %{__make} %{?_smp_mflags} %{?mflags} V=1}
-%{!?run_ldconfig: %global run_ldconfig %{?ldconfig}}
 %{!?_pkgdocdir: %global _pkgdocdir %{_docdir}/%{name}-%{version}}
 
 Name: libvma
@@ -25,6 +24,7 @@ BuildRequires: gcc-c++
 BuildRequires: libibverbs-devel
 BuildRequires: librdmacm-devel
 BuildRequires: libnl3-devel
+BuildRequires: systemd-rpm-macros
 
 %description
 libvma is a LD_PRELOAD-able library that boosts performance of TCP and
@@ -82,42 +82,15 @@ install -D -m 644 contrib/scripts/vma.service $RPM_BUILD_ROOT/%{_unitdir}/vma.se
 install -m 755 contrib/scripts/vma.init $RPM_BUILD_ROOT/%{_sbindir}/vma
 
 %post
-%{run_ldconfig}
-
-if [ $1 = 1 ]; then
-    if type systemctl >/dev/null 2>&1; then
-        systemctl --no-reload enable vma.service >/dev/null 2>&1 || true
-    elif [ -e /sbin/chkconfig ]; then
-        /sbin/chkconfig --add vma
-    elif [ -e /usr/sbin/update-rc.d ]; then
-        /usr/sbin/update-rc.d vma defaults
-    else
-        %{_libdir}/lsb/install_initd %{_sysconfdir}/init.d/vma
-    fi
-fi
+%{?ldconfig}
+%systemd_post vma.service
 
 %preun
-if [ $1 = 0 ]; then
-    if type systemctl >/dev/null 2>&1; then
-        systemctl --no-reload disable vma.service >/dev/null 2>&1 || true
-        systemctl stop vma.service || true
-    elif [ -e /sbin/chkconfig ]; then
-        %{_sysconfdir}/init.d/vma stop
-        /sbin/chkconfig --del vma
-    elif [ -e /usr/sbin/update-rc.d ]; then
-        %{_sysconfdir}/init.d/vma stop
-        /usr/sbin/update-rc.d -f vma remove
-    else
-        %{_sysconfdir}/init.d/vma stop
-        %{_libdir}/lsb/remove_initd %{_sysconfdir}/init.d/vma
-    fi
-fi
+%systemd_preun vma.service
 
 %postun
-%{run_ldconfig}
-if type systemctl >/dev/null 2>&1; then
-    systemctl --system daemon-reload >/dev/null 2>&1 || true
-fi
+%{?ldconfig}
+%systemd_postun_with_restart vma.service
 
 %files
 %{_libdir}/%{name}.so*
