@@ -67,13 +67,6 @@ fi
 
 find $RPM_BUILD_ROOT%{_libdir} -name '*.la' -delete
 
-install -m 644 src/vma/vma_extra.h $RPM_BUILD_ROOT/%{_includedir}/mellanox/vma_extra.h
-install -m 644 src/vma/util/libvma.conf $RPM_BUILD_ROOT/%{_sysconfdir}/
-install -s -m 755 src/stats/vma_stats $RPM_BUILD_ROOT/%{_bindir}/vma_stats
-install -s -m 755 tools/daemon/vmad $RPM_BUILD_ROOT/%{_sbindir}/vmad
-install -D -m 644 contrib/scripts/vma.service $RPM_BUILD_ROOT/%{_unitdir}/vma.service
-install -m 755 contrib/scripts/vma.init $RPM_BUILD_ROOT/%{_sbindir}/vma
-
 %post
 %systemd_post vma.service
 
@@ -85,10 +78,13 @@ install -m 755 contrib/scripts/vma.init $RPM_BUILD_ROOT/%{_sbindir}/vma
 
 %files
 %{_libdir}/%{name}.so*
+%dir %{_pkgdocdir}
 %doc %{_pkgdocdir}/README.txt
 %doc %{_pkgdocdir}/journal.txt
 %doc %{_pkgdocdir}/VMA_VERSION
 %config(noreplace) %{_sysconfdir}/libvma.conf
+%dir %{_sysconfdir}/security
+%dir %{_sysconfdir}/security/limits.d
 %config(noreplace) %{_sysconfdir}/security/limits.d/30-libvma-limits.conf
 %{_sbindir}/vmad
 %{_prefix}/lib/systemd/system/vma.service
@@ -96,6 +92,7 @@ install -m 755 contrib/scripts/vma.init $RPM_BUILD_ROOT/%{_sbindir}/vma
 %license COPYING LICENSE
 
 %files devel
+%dir %{_includedir}/mellanox
 %{_includedir}/mellanox/vma_extra.h
 
 %files utils
