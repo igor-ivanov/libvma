@@ -1,9 +1,6 @@
 %{!?configure_options: %global configure_options %{nil}}
 %{!?use_rel: %global use_rel 1}
 
-%{!?make_build: %global make_build %{__make} %{?_smp_mflags} %{?mflags} V=1}
-%{!?_pkgdocdir: %global _pkgdocdir %{_docdir}/%{name}-%{version}}
-
 Name: libvma
 Version: 9.0.2
 Release: %{use_rel}%{?dist}
@@ -37,11 +34,8 @@ No application binary change is required for that.
 libvma is supported by RDMA capable devices that support "verbs"
 IBV_QPT_RAW_PACKET QP for Ethernet and/or IBV_QPT_UD QP for IPoIB.
 
-This package includes headers for building programs with libvma's interface
-directly, as opposed to loading it dynamically with LD_PRELOAD.
-
 %package devel
-Summary: Header files and link required to develop with Libvma
+Summary: Header files required to develop with libvma
 Requires: %{name}%{?_isa} = %{version}-%{release}
 
 %description devel
@@ -49,12 +43,12 @@ This package includes headers for building programs with libvma's
 interfaces.
 
 %package utils
-Summary: Libvma utilities
+Summary: libvma utilities
 Requires: %{name}%{?_isa} = %{version}-%{release}
 
 %description utils
 This package contains the tool vma_stats for collecting and
-analyzing Libvma statistic.
+analyzing libvma statistic.
 
 %prep
 %setup -q
@@ -65,8 +59,7 @@ if [ ! -e configure ] && [ -e autogen.sh ]; then
     VMA_RELEASE=%{use_rel} ./autogen.sh
 fi
 
-%configure --docdir=%{_pkgdocdir} \
-           %{?configure_options}
+%configure %{?configure_options}
 %{make_build}
 
 %install
@@ -82,14 +75,12 @@ install -D -m 644 contrib/scripts/vma.service $RPM_BUILD_ROOT/%{_unitdir}/vma.se
 install -m 755 contrib/scripts/vma.init $RPM_BUILD_ROOT/%{_sbindir}/vma
 
 %post
-%{?ldconfig}
 %systemd_post vma.service
 
 %preun
 %systemd_preun vma.service
 
 %postun
-%{?ldconfig}
 %systemd_postun_with_restart vma.service
 
 %files
@@ -102,7 +93,7 @@ install -m 755 contrib/scripts/vma.init $RPM_BUILD_ROOT/%{_sbindir}/vma
 %{_sbindir}/vmad
 %{_prefix}/lib/systemd/system/vma.service
 %{_sbindir}/vma
-%license COPYING
+%license COPYING LICENSE
 
 %files devel
 %{_includedir}/mellanox/vma_extra.h
