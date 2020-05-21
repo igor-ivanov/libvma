@@ -19,7 +19,7 @@ BuildRequires: autoconf
 BuildRequires: libtool
 BuildRequires: gcc-c++
 BuildRequires: libibverbs-devel
-BuildRequires: librdmacm-devel
+BuildRequires: rdma-core-devel
 BuildRequires: libnl3-devel
 BuildRequires: systemd-rpm-macros
 
