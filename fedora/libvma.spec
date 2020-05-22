@@ -9,6 +9,7 @@ Summary: A library for boosting TCP and UDP traffic (over RDMA hardware)
 License: GPLv2 or BSD
 Url: https://github.com/Mellanox/libvma
 Source0: https://github.com/Mellanox/libvma/archive/%{version}/%{name}-%{version}.tar.gz
+Patch0: 0001-issue-928161-Add-man-pages.patch
 
 # libvma currently supports only the following architectures
 ExclusiveArch: x86_64 ppc64le ppc64 aarch64
@@ -43,15 +44,15 @@ This package includes headers for building programs with libvma's
 interfaces.
 
 %package utils
-Summary: libvma utilities
+Summary: Utilities used with libvma
 Requires: %{name}%{?_isa} = %{version}-%{release}
 
 %description utils
-This package contains the tool vma_stats for collecting and
-analyzing libvma statistic.
+This package contains the tool for collecting and analyzing libvma statistic.
 
 %prep
 %setup -q
+%autosetup -p1
 
 %build
 export revision=%{use_rel}
@@ -90,6 +91,8 @@ find $RPM_BUILD_ROOT%{_libdir} -name '*.la' -delete
 %{_prefix}/lib/systemd/system/vma.service
 %{_sbindir}/vma
 %license COPYING LICENSE
+%{_mandir}/man7/vma.*
+%{_mandir}/man8/vmad.*
 
 %files devel
 %dir %{_includedir}/mellanox
@@ -97,10 +100,12 @@ find $RPM_BUILD_ROOT%{_libdir} -name '*.la' -delete
 
 %files utils
 %{_bindir}/vma_stats
+%{_mandir}/man8/vma_stats.*
 
 %changelog
 * Fri Apr 17 2020 Igor Ivanov <igor.ivanov.va@gmail.com> 9.0.2-1
 - Align with Fedora guidelines
+- Add patch0 with man pages
 
 * Thu Feb 7 2019 Igor Ivanov <igor.ivanov.va@gmail.com> 8.8.2-1
 - Improve package update processing

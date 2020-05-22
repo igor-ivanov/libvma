@@ -1,0 +1,316 @@
+From 5d23e646056ffb0c77826f7e9413edab2f3d7235 Mon Sep 17 00:00:00 2001
+From: Igor Ivanov <igor.ivanov.va@gmail.com>
+Date: Thu, 8 Jun 2017 17:50:01 +0300
+Subject: [PATCH] issue: 928161 Add man pages
+
+Changes introduce new folder as doc to store any documentation
+related VMA library.
+As a part of this commit man folder is added with man pages for
+vma, vma daemon and vma_stats.
+
+Signed-off-by: Igor Ivanov <igor.ivanov.va@gmail.com>
+---
+ Makefile.am                 |  4 +--
+ build/libvma.spec.in        |  3 ++
+ configure.ac                |  5 +--
+ debian/libvma-utils.install |  1 +
+ debian/libvma.install       |  2 ++
+ doc/man/Makefile.am         | 24 +++++++++++++
+ doc/man/vma.7.in            | 42 ++++++++++++++++++++++
+ doc/man/vma_stats.8.in      | 70 +++++++++++++++++++++++++++++++++++++
+ doc/man/vmad.8.in           | 41 ++++++++++++++++++++++
+ 9 files changed, 188 insertions(+), 4 deletions(-)
+ create mode 100644 doc/man/Makefile.am
+ create mode 100644 doc/man/vma.7.in
+ create mode 100644 doc/man/vma_stats.8.in
+ create mode 100644 doc/man/vmad.8.in
+
+diff --git a/Makefile.am b/Makefile.am
+index 3872264d..6eecd5af 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -1,7 +1,7 @@
+-SUBDIRS := src tools
++SUBDIRS := src tools doc/man
+ 
+ 
+-DIST_SUBDIRS := src tests tools
++DIST_SUBDIRS := src tests tools doc/man
+ 
+ noinst_SCRIPTS = \
+ 	$(wildcard contrib/scripts/*)
+diff --git a/build/libvma.spec.in b/build/libvma.spec.in
+index f11e48d4..695348aa 100644
+--- a/build/libvma.spec.in
++++ b/build/libvma.spec.in
+@@ -169,6 +169,8 @@ fi
+ %else
+ %{_sysconfdir}/init.d/vma
+ %endif
++%{_mandir}/man7/vma.*
++%{_mandir}/man8/vmad.*
+ 
+ %files devel
+ %defattr(-,root,root,-)
+@@ -178,6 +180,7 @@ fi
+ %defattr(-,root,root)
+ %{_bindir}/vma_stats
+ %{vma_datadir}/scripts/vma_perf_envelope.sh
++%{_mandir}/man8/vma_stats.*
+ 
+ %changelog
+ * Mon Nov 28 2016 Igor Ivanov <igor.ivanov.va@gmail.com>
+diff --git a/configure.ac b/configure.ac
+index 1df73e28..8d19935f 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -53,7 +53,7 @@ dateopt=""
+     if test -n "$SOURCE_DATE_EPOCH" ; then
+     dateopt="-u -d @$SOURCE_DATE_EPOCH"
+ fi
+-AC_SUBST([BUILD_DATE], [$(date $dateopt +'%b/%d/%Y')])
++AC_SUBST([BUILD_DATE], [$(date $dateopt +'%d %b %Y')])
+ AC_SUBST([BUILD_TIME], [$(date $dateopt +'%H:%M:%S')])
+ AC_SUBST([BUILD_DATE_CHANGELOG], [$(date $dateopt +'%a, %d %b %Y %T %z')])
+ 
+@@ -102,9 +102,9 @@ show_section_title "Configure build tools"
+ 
+ # Find compiler, libtools, etc
+ #
++LT_INIT([disable-static])
+ AC_PROG_CC
+ AC_PROG_CXX
+-AC_PROG_LIBTOOL
+ AC_PROG_YACC
+ AM_PROG_LEX
+ 
+@@ -489,6 +489,7 @@ AC_CONFIG_FILES([
+ 		tests/throughput_test/Makefile
+ 		tools/Makefile
+ 		tools/daemon/Makefile
++		doc/man/Makefile
+ 		contrib/scripts/vma.init
+ 		contrib/scripts/vma.service
+ 		build/libvma.spec
+diff --git a/debian/libvma-utils.install b/debian/libvma-utils.install
+index 86a9e9c7..a2452f72 100644
+--- a/debian/libvma-utils.install
++++ b/debian/libvma-utils.install
+@@ -1 +1,2 @@
+ usr/bin/vma_stats
++usr/share/man/man8/vma_stats.*
+diff --git a/debian/libvma.install b/debian/libvma.install
+index c2dc65bc..65612191 100644
+--- a/debian/libvma.install
++++ b/debian/libvma.install
+@@ -7,4 +7,6 @@ usr/sbin/
+ etc/libvma.conf
+ etc/
+ contrib/scripts/vma.service lib/systemd/system
++usr/share/man/man7/vma.*
++usr/share/man/man8/vmad.*
+ libvma-debug.so usr/lib
+diff --git a/doc/man/Makefile.am b/doc/man/Makefile.am
+new file mode 100644
+index 00000000..e1c54e58
+--- /dev/null
++++ b/doc/man/Makefile.am
+@@ -0,0 +1,24 @@
++vma_man_pages = \
++	vma.7 \
++	vmad.8 \
++	vma_stats.8
++
++man_MANS = $(vma_man_pages)
++CLEANFILES = $(vma_man_pages)
++EXTRA_DIST = \
++	$(vma_man_pages:.7=.7.in) \
++	$(vma_man_pages:.8=.8.in)
++
++%.7: %.7.in
++	@cp $< $@
++	@sed -i 's/#BUILD_DATE#/@BUILD_DATE@/g' $@
++	@sed -i 's/#VMA_LIBRARY_MAJOR#/@VMA_LIBRARY_MAJOR@/g' $@
++	@sed -i 's/#VMA_LIBRARY_MINOR#/@VMA_LIBRARY_MINOR@/g' $@
++	@sed -i 's/#VMA_LIBRARY_REVISION#/@VMA_LIBRARY_REVISION@/g' $@
++
++%.8: %.8.in
++	@cp $< $@
++	@sed -i 's/#BUILD_DATE#/@BUILD_DATE@/g' $@
++	@sed -i 's/#VMA_LIBRARY_MAJOR#/@VMA_LIBRARY_MAJOR@/g' $@
++	@sed -i 's/#VMA_LIBRARY_MINOR#/@VMA_LIBRARY_MINOR@/g' $@
++	@sed -i 's/#VMA_LIBRARY_REVISION#/@VMA_LIBRARY_REVISION@/g' $@
+diff --git a/doc/man/vma.7.in b/doc/man/vma.7.in
+new file mode 100644
+index 00000000..d029d5d9
+--- /dev/null
++++ b/doc/man/vma.7.in
+@@ -0,0 +1,42 @@
++.\" -*- groff -*-
++.\"
++.TH VMA 7 "#BUILD_DATE#" libvma "VMA(#VMA_LIBRARY_MAJOR#.#VMA_LIBRARY_MINOR#.#VMA_LIBRARY_REVISION#) User's Manual"
++.SH NAME
++VMA \- Mellanox's Messaging Accelerator (VMA) library.
++
++.SH SYNOPSIS
++.B libvma.so
++
++.SH DESCRIPTION
++.B VMA
++Mellanox's Messaging Accelerator (VMA) boosts performance for message-based
++and streaming applications such as those found in financial services market
++data environments and Web2.0 clusters. It allows application written over
++standard socket API to run over Ethernet and/or Infiniband from user-space
++with full network stack bypass. The result is a reduction in latency by as
++much as 300%, an increase in application throughput by as much as 200%, higher
++packets rates and better CPU utilization as compared to applications running
++on standard Ethernet or InfiniBand interconnect networks.
++
++.SH FILES
++.I /etc/libvma.conf
++.RS
++The system wide configuration file. Look inside libvma.conf for instructions
++and examples.
++.RE
++.I /usr/share/doc/libvma/README.txt
++.RS
++General VMA Library description.
++.RE
++.I /usr/share/doc/libvma/VMA_VERSION
++.RS
++VMA Library version information.
++.RE
++
++.SH SEE ALSO
++.BR vmad (8),
++.BR vma_stats (8)
++
++.SH "AUTHORS"
++.TP
++Igor Ivanov <igori@mellanox.com>
+diff --git a/doc/man/vma_stats.8.in b/doc/man/vma_stats.8.in
+new file mode 100644
+index 00000000..9609a464
+--- /dev/null
++++ b/doc/man/vma_stats.8.in
+@@ -0,0 +1,70 @@
++.\" -*- groff -*-
++.\"
++.TH VMA 8 "#BUILD_DATE#" libvma "VMA(#VMA_LIBRARY_MAJOR#.#VMA_LIBRARY_MINOR#.#VMA_LIBRARY_REVISION#) User's Manual"
++.SH NAME
++vma_stats \- Mellanox's Messaging Accelerator (VMA) statistic utility.
++
++.SH SYNOPSIS
++.B vma_stats
++[\-p \fIpid\fP] [\-k \fIdirectory\fP] [\-v \fIview\fP] [\-d \fIdetails\fP] [\-i \fIinterval\fP]
++[\-n \fIapplication\fP] [\-f] [\-F] [\-c \fIcycles\fP] [\-l \fIlevel\fP] [\-z]
++
++.SH DESCRIPTION
++vma_stats is program that reports information about sockets and internal related objects for vma (7).
++vma_stats can be configured using command-line options
++
++The options are as follows:
++.sp
++\fB\-p,\-\-pid\fP \fIid\fP
++Show VMA statistics for process with pid.
++.TP
++\fB\-k,\-\-directory\fP=\fIdirectory\fP
++Set shared memory directory path.
++.TP
++\fB\-n,\-\-name\fP=\fIapplication\fP
++Show VMA statistics for application.
++.TP
++\fB\-f,\-\-find_pid\fP
++Find and show statistics for VMA instance running.
++.TP
++\fB\-F,\-\-forbid_clean\fP
++By setting this flag inactive shared objects would not be removed.
++.TP
++\fB\-i,\-\-interval\fP=\fIinterval\fP
++Print report every interval seconds.
++.TP
++\fB\-c,\-\-cycles\fP=\fIcycles\fP
++Do report print cycles and exit, use 0 value for infinite.
++.TP
++\fB\-v,\-\-view\fP=\fI[1|2|3|4|5]\fP
++Set view type: 1\- basic info, 2\- extra info, 3\- full info, 4\- mc groups, 5\- similar to 'netstat \-tunaep'.
++.TP
++\fB\-d,\-\-details\fP=\fI[1|2]\fP
++Set details mode:1\- to see totals, 2\- to see deltas.
++.TP
++\fB\-z,\-\-zero\fP
++Zero counters.
++.TP
++\fB\-l,\-\-log_level\fP=\fIlevel\fP
++Set VMA log level (one of: none, panic, error, warn, info, details, debug, fine, finer, all).
++.TP
++\fB\-S,\-\-fd_dump\fP=\fIfd [level]\fP
++Dump statistics for fd number using log level. Use 0 value for all open fds.
++.TP
++\fB\-D,\-\-details_level\fP=\fIlevel\fP
++Set VMA log details level.
++.TP
++\fB\-s,\-\-sockets\fP=\fI[list|range]\fP
++Log only sockets that match list or range, format: 4-16 or 1,9 (or combination).
++.TP
++\fB\-V,\-\-version\fP
++Print version.
++.TP
++
++.SH SEE ALSO
++.BR vma (7),
++.BR vmad (8)
++
++.SH "AUTHORS"
++.TP
++Igor Ivanov <igori@mellanox.com>
+diff --git a/doc/man/vmad.8.in b/doc/man/vmad.8.in
+new file mode 100644
+index 00000000..cac0c75b
+--- /dev/null
++++ b/doc/man/vmad.8.in
+@@ -0,0 +1,41 @@
++.\" -*- groff -*-
++.\"
++.TH VMA 8 "#BUILD_DATE#" libvma "VMA(#VMA_LIBRARY_MAJOR#.#VMA_LIBRARY_MINOR#.#VMA_LIBRARY_REVISION#) User's Manual"
++.SH NAME
++vmad \- Mellanox's Messaging Accelerator (VMA) daemon.
++
++.SH SYNOPSIS
++.B vmad
++[\-\-console] [\-\-pid,-p \fInum\fP] [\-\-fid,-f \fInum\fP]
++[\-\-force-rst] [\-\-verbose,\-v \fIlevel\fP]
++
++.SH DESCRIPTION
++vmad is the daemon program for vma (7).
++
++vmad can be configured using command-line options
++
++The options are as follows:
++.sp
++\fB\-\-console\fP
++Enable foreground mode.
++.TP
++\fB\-\-pid,\-p \fP\fInum\fP
++Set prime number as maximum of processes per node.
++.TP
++\fB\-\-fid,\-f \fP\fInum\fP
++Set prime number as maximum of sockets per process.
++.TP
++\fB\-\-force\-rst\fP
++Force internal RST.
++.TP
++\fB\-\-verbose,\-v \fP\fIlevel\fP
++Output verbose level
++.TP
++
++.SH SEE ALSO
++.BR vma (7),
++.BR vma_stats (8)
++
++.SH "AUTHORS"
++.TP
++Igor Ivanov <igori@mellanox.com>
+-- 
+2.18.1
+
