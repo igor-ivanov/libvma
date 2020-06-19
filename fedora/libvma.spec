@@ -1,15 +1,15 @@
 %{!?configure_options: %global configure_options %{nil}}
-%{!?use_rel: %global use_rel 1}
 
 Name: libvma
 Version: 9.0.2
-Release: %{use_rel}%{?dist}
+Release: 1%{?dist}
 Summary: A library for boosting TCP and UDP traffic (over RDMA hardware)
 
 License: GPLv2 or BSD
 Url: https://github.com/Mellanox/libvma
 Source0: https://github.com/Mellanox/libvma/archive/%{version}/%{name}-%{version}.tar.gz
 Patch0: 0001-issue-928161-Add-man-pages.patch
+Patch1: 0002-Update-systemctl-files.patch
 
 # libvma currently supports only the following architectures
 ExclusiveArch: x86_64 ppc64le ppc64 aarch64
@@ -19,10 +19,10 @@ BuildRequires: automake
 BuildRequires: autoconf
 BuildRequires: libtool
 BuildRequires: gcc-c++
-BuildRequires: libibverbs-devel
 BuildRequires: rdma-core-devel
-BuildRequires: libnl3-devel
 BuildRequires: systemd-rpm-macros
+BuildRequires: pkgconfig(libnl-3.0)
+BuildRequires: pkgconfig(libnl-route-3.0)
 
 %description
 libvma is a LD_PRELOAD-able library that boosts performance of TCP and
@@ -55,16 +55,16 @@ This package contains the tool for collecting and analyzing libvma statistic.
 %autosetup -p1
 
 %build
-export revision=%{use_rel}
+export revision=1
 if [ ! -e configure ] && [ -e autogen.sh ]; then
-    VMA_RELEASE=%{use_rel} ./autogen.sh
+    VMA_RELEASE=1 ./autogen.sh
 fi
 
 %configure %{?configure_options}
 %{make_build}
 
 %install
-%{make_build} DESTDIR=${RPM_BUILD_ROOT} install
+%{make_install}
 
 find $RPM_BUILD_ROOT%{_libdir} -name '*.la' -delete
 
