@@ -1,0 +1,54 @@
+From 402a7f565d6171d195a5b65b9d54f42d802211c1 Mon Sep 17 00:00:00 2001
+From: Igor Ivanov <igor.ivanov.va@gmail.com>
+Date: Tue, 14 Jul 2020 19:34:02 +0300
+Subject: [PATCH] Remove 30-libvma-limits.conf
+
+RDMA communications require that physical memory in the computer
+be pinned. Pinning memory is normally a very privileged operation.
+In order to allow users other than root to run large RDMA applications,
+it will likely be necessary to increase the amount of memory
+that non-root users are allowed to pin in the system.
+This is done by adding a file in the /etc/security/limits.d/ directory.
+It can be done by an administrator of system for user/group that
+use libvma.
+
+Signed-off-by: Igor Ivanov <igor.ivanov.va@gmail.com>
+---
+ src/vma/Makefile.am                | 5 +----
+ src/vma/util/30-libvma-limits.conf | 6 ------
+ 2 files changed, 1 insertion(+), 10 deletions(-)
+ delete mode 100644 src/vma/util/30-libvma-limits.conf
+
+diff --git a/src/vma/Makefile.am b/src/vma/Makefile.am
+index 6a710a72..8f73fe93 100644
+--- a/src/vma/Makefile.am
++++ b/src/vma/Makefile.am
+@@ -28,12 +28,9 @@ EXTRA_DIST = \
+ 	util/hash_map.inl \
+ 	dev/cq_mgr.inl \
+ 	dev/cq_mgr_mlx5.inl \
+-	util/libvma.conf \
+-	util/30-libvma-limits.conf
++	util/libvma.conf
+ 
+ sysconf_DATA = util/libvma.conf
+-othersysconfdir=$(sysconfdir)/security/limits.d
+-othersysconf_DATA=util/30-libvma-limits.conf
+ otherincludedir = $(includedir)/mellanox
+ otherinclude_HEADERS = vma_extra.h
+ 
+diff --git a/src/vma/util/30-libvma-limits.conf b/src/vma/util/30-libvma-limits.conf
+deleted file mode 100644
+index 9c0d8bc0..00000000
+--- a/src/vma/util/30-libvma-limits.conf
++++ /dev/null
+@@ -1,6 +0,0 @@
+-# Default limits that are needed for proper work of libvma
+-# Read more about this topic in the VMA's User Manual
+-
+-*             -   memlock        unlimited
+-*          soft   memlock        unlimited
+-*          hard   memlock        unlimited
+-- 
+2.18.1
+

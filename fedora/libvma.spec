@@ -10,6 +10,8 @@ Url: https://github.com/Mellanox/libvma
 Source0: https://github.com/Mellanox/libvma/archive/%{version}/%{name}-%{version}.tar.gz
 Patch0: 0001-issue-928161-Add-man-pages.patch
 Patch1: 0002-Update-systemctl-files.patch
+Patch2: 0003-Remove-30-libvma-limits.patch
+Patch3: 0004-Use-vmad-for-systemd.patch
 
 # libvma currently supports only the following architectures
 ExclusiveArch: x86_64 ppc64le ppc64 aarch64
@@ -67,6 +69,7 @@ fi
 %{make_install}
 
 find $RPM_BUILD_ROOT%{_libdir} -name '*.la' -delete
+install -D -m 644 contrib/scripts/vma.service $RPM_BUILD_ROOT/%{_prefix}/lib/systemd/system/vma.service
 
 %post
 %systemd_post vma.service
@@ -84,12 +87,8 @@ find $RPM_BUILD_ROOT%{_libdir} -name '*.la' -delete
 %doc %{_pkgdocdir}/journal.txt
 %doc %{_pkgdocdir}/VMA_VERSION
 %config(noreplace) %{_sysconfdir}/libvma.conf
-%dir %{_sysconfdir}/security
-%dir %{_sysconfdir}/security/limits.d
-%config(noreplace) %{_sysconfdir}/security/limits.d/30-libvma-limits.conf
 %{_sbindir}/vmad
 %{_prefix}/lib/systemd/system/vma.service
-%{_sbindir}/vma
 %license COPYING LICENSE
 %{_mandir}/man7/vma.*
 %{_mandir}/man8/vmad.*
