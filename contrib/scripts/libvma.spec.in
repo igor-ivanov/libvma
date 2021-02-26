@@ -150,7 +150,6 @@ fi
 %dir %{_pkgdocdir}
 %doc %{_pkgdocdir}/README.txt
 %doc %{_pkgdocdir}/journal.txt
-%doc %{_pkgdocdir}/VMA_VERSION
 %config(noreplace) %{_sysconfdir}/libvma.conf
 %dir %{_sysconfdir}/security
 %dir %{_sysconfdir}/security/limits.d
