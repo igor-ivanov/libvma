@@ -148,8 +148,8 @@ fi
 %files
 %{_libdir}/%{name}.so*
 %dir %{_pkgdocdir}
-%doc %{_pkgdocdir}/README.txt
-%doc %{_pkgdocdir}/journal.txt
+%doc %{_pkgdocdir}/README
+%doc %{_pkgdocdir}/CHANGES
 %config(noreplace) %{_sysconfdir}/libvma.conf
 %dir %{_sysconfdir}/security
 %dir %{_sysconfdir}/security/limits.d
